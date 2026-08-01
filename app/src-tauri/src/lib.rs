@@ -343,7 +343,10 @@ fn log_path_import(app: &AppHandle, message: &str) {
         }
     };
     #[cfg(not(target_os = "linux"))]
-    let app_log_dir = None;
+    // Keep the cfg-only fallback's type explicit: macOS compiles this branch
+    // without the Linux `app_log_dir()` expression that would otherwise
+    // provide inference (E0282 under the macOS CI target).
+    let app_log_dir: Option<std::path::PathBuf> = None;
     let Some(path) = path_import_log_path(cfg!(target_os = "linux"), &home, app_log_dir.as_deref()) else {
         return;
     };
