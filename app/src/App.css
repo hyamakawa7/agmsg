@@ -31,7 +31,13 @@ body,
   flex-direction: column;
   background: var(--bg);
   color: var(--fg);
-  font: 13px/1.5 system-ui, Ubuntu, Cantarell, -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif;
+  font: 13px/1.5 -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif;
+}
+
+/* Linux gets an explicit Ubuntu-compatible UI stack. Keep the base stack
+   above unchanged so macOS and Windows retain their existing font choice. */
+.platform-linux {
+  font-family: system-ui, Ubuntu, Cantarell, -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif;
 }
 
 /* These sit at the very top of the window, same row as the overlaid macOS
@@ -1009,8 +1015,12 @@ body.resizing-row {
   inset: 0;
   overflow-y: auto;
   padding: 8px 12px;
-  font-family: "Ubuntu Mono", "DejaVu Sans Mono", Menlo, Monaco, "Courier New", monospace;
+  font-family: Menlo, Monaco, "Courier New", monospace;
   font-size: 12px;
+}
+.platform-linux .room {
+  /* Keep this list in sync with LINUX_TERMINAL_FONT_FAMILY in App.tsx. */
+  font-family: "Ubuntu Mono", "DejaVu Sans Mono", Menlo, Monaco, "Courier New", monospace;
 }
 /* Shared name coloring for both layouts. */
 .mf {

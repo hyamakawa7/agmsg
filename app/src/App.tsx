@@ -121,14 +121,22 @@ export function shellPaneFrom(info: LoginShellInfo | null, id: string, label: st
 }
 
 /**
- * Returns the root CSS class needed for the macOS overlay title-bar layout.
+ * Returns the root CSS class needed for the platform-specific window layout.
  * Tauri's webview user agent is the only platform signal already available to
- * this frontend; keeping the check pure makes the intentional Windows/Linux
- * non-overlay layout testable without a DOM or an OS plugin dependency.
+ * this frontend; keeping the check pure makes the platform branches testable
+ * without a DOM or an OS plugin dependency.
  */
 export function platformClassForUserAgent(userAgent: string): string {
-  return /\b(?:macintosh|mac os x)\b/i.test(userAgent) ? "platform-macos" : "";
+  if (/\b(?:macintosh|mac os x)\b/i.test(userAgent)) return "platform-macos";
+  if (/\blinux\b/i.test(userAgent)) return "platform-linux";
+  return "";
 }
+
+// Keep the xterm.js stacks in one place so TerminalPane cannot accidentally
+// change the non-Linux fallback while adding a Linux-only font preference.
+export const DEFAULT_TERMINAL_FONT_FAMILY = "Menlo, Monaco, 'Courier New', monospace";
+export const LINUX_TERMINAL_FONT_FAMILY =
+  "'Ubuntu Mono', 'DejaVu Sans Mono', Menlo, Monaco, 'Courier New', monospace";
 
 // Whether openShellTab's new window should still be committed after its
 // getLoginShell await — false if the user switched teams while it was in

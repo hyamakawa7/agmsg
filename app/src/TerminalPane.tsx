@@ -6,6 +6,11 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import {
+  DEFAULT_TERMINAL_FONT_FAMILY,
+  LINUX_TERMINAL_FONT_FAMILY,
+  platformClassForUserAgent,
+} from "./App";
 import { createWriteBatcher } from "./writeBatcher";
 import { attachWebglAddon } from "./webglAttach";
 
@@ -74,9 +79,13 @@ export function TerminalPane({
 
   useEffect(() => {
     let disposed = false;
+    const fontFamily =
+      platformClassForUserAgent(navigator.userAgent) === "platform-linux"
+        ? LINUX_TERMINAL_FONT_FAMILY
+        : DEFAULT_TERMINAL_FONT_FAMILY;
     const term = new Terminal({
       fontSize,
-      fontFamily: "'Ubuntu Mono', 'DejaVu Sans Mono', Menlo, Monaco, 'Courier New', monospace",
+      fontFamily,
       cursorBlink: true,
       theme: { background: "#0b0e14", foreground: "#c5c8c6" },
     });

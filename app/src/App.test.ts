@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_TERMINAL_FONT_FAMILY,
   hasUnsafeDropPath,
   joinDroppedPaths,
+  LINUX_TERMINAL_FONT_FAMILY,
   platformClassForUserAgent,
   resolveFileDropTarget,
   shellPaneFrom,
@@ -19,9 +21,24 @@ describe("platformClassForUserAgent", () => {
     );
   });
 
-  it("leaves Linux and Windows webviews on the normal title-bar layout", () => {
-    expect(platformClassForUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")).toBe("");
+  it("marks Linux webviews for the Linux-only platform styling", () => {
+    expect(platformClassForUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")).toBe("platform-linux");
+  });
+
+  it("leaves Windows webviews without a platform-specific class", () => {
     expect(platformClassForUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")).toBe("");
+  });
+});
+
+describe("Linux terminal font fallback", () => {
+  it("keeps the non-Linux fallback from the pre-Linux implementation", () => {
+    expect(DEFAULT_TERMINAL_FONT_FAMILY).toBe("Menlo, Monaco, 'Courier New', monospace");
+  });
+
+  it("keeps Ubuntu Mono and DejaVu Sans Mono ahead of the legacy stack", () => {
+    expect(LINUX_TERMINAL_FONT_FAMILY).toBe(
+      "'Ubuntu Mono', 'DejaVu Sans Mono', Menlo, Monaco, 'Courier New', monospace",
+    );
   });
 });
 
