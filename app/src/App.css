@@ -510,22 +510,16 @@ body.resizing-row {
 .sidebar.collapsed {
   width: 44px;
 }
-/* Collapse/expand toggle — its own slim strip, level with the overlaid
-   macOS traffic lights (koit: not a tall empty row below them, and not
-   crowded into brand-row either — its own row, just short and right by the
-   lights rather than adding real vertical space). */
+/* Collapse/expand toggle — its own slim strip in every platform layout.
+   The control needs a real hit area even when there are no macOS overlay
+   traffic lights; only the collapsed rail's extra top clearance below is
+   platform-specific. */
 .sidebar-toggle-row {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  height: 0;
-  padding: 0;
-  overflow: hidden;
-}
-.platform-macos .sidebar-toggle-row {
   height: 28px;
   padding: 0 6px;
-  overflow: visible;
 }
 .sidebar-collapse-toggle {
   display: flex;
