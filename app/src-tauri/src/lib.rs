@@ -148,6 +148,10 @@ fn import_login_shell_path(app: &AppHandle) {
 /// priority order. The callers gather the sources (environment, account
 /// database, and fallback files) outside this function so the precedence can
 /// be tested without invoking external commands or reading the host system.
+///
+/// The production Linux/macOS priority is owned by
+/// `resolve_login_shell_with_probes`; this helper is only the final pure
+/// fold over already-probed values (D-9).
 #[cfg_attr(not(unix), allow(dead_code))]
 fn select_login_shell(
     shell: Option<&str>,
@@ -416,12 +420,16 @@ fn make_menu(app: &AppHandle, lang: &str) -> tauri::Result<(Menu<Wry>, CheckMenu
             // GTK does not implement muda's predefined quit item reliably.
             // Keep the operation visible as a regular item and handle it in
             // on_menu_event below so startup and shutdown stay deterministic.
+            // Ctrl+Q is a terminal control character (and was observed to
+            // terminate the app while an xterm.js pane had focus), so the
+            // native accelerator deliberately uses the non-conflicting
+            // CmdOrCtrl+Shift+Q chord (D-10).
             &MenuItem::with_id(
                 app,
                 QUIT_MENU_ID,
                 m_name("quit"),
                 true,
-                Some("CmdOrCtrl+Q"),
+                Some("CmdOrCtrl+Shift+Q"),
             )?,
         ],
     )?;
@@ -442,18 +450,6 @@ fn make_menu(app: &AppHandle, lang: &str) -> tauri::Result<(Menu<Wry>, CheckMenu
             &PredefinedMenuItem::show_all(app, Some(&m("showAll")))?,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::quit(app, Some(&m_name("quit")))?,
-        ],
-    )?;
-    #[cfg(target_os = "linux")]
-    let edit_menu = Submenu::with_items(
-        app,
-        m("editMenu"),
-        true,
-        &[
-            &PredefinedMenuItem::cut(app, Some(&m("cut")))?,
-            &PredefinedMenuItem::copy(app, Some(&m("copy")))?,
-            &PredefinedMenuItem::paste(app, Some(&m("paste")))?,
-            &PredefinedMenuItem::select_all(app, Some(&m("selectAll")))?,
         ],
     )?;
     #[cfg(not(target_os = "linux"))]
@@ -532,7 +528,16 @@ fn make_menu(app: &AppHandle, lang: &str) -> tauri::Result<(Menu<Wry>, CheckMenu
         ],
     )?;
     #[cfg(target_os = "linux")]
-    let menu = Menu::with_items(app, &[&app_menu, &edit_menu, &view_menu])?;
+    // Linux intentionally has no native Edit submenu. muda's GTK
+    // PredefinedMenuItem edit actions are inert without its optional libxdo
+    // feature, while enabling that feature would register accelerators that
+    // can steal terminal control bytes. xterm.js supplies the tested
+    // right-click Copy/Paste, primary-selection middle-click, and
+    // Ctrl+Shift+C/V paths instead (Option B).
+    // The Window submenu is likewise omitted on Linux (D-3); its only prior
+    // entries were minimize/close_window, which GTK exposes through the
+    // window manager and the title bar without an app-menu replacement.
+    let menu = Menu::with_items(app, &[&app_menu, &view_menu])?;
     #[cfg(not(target_os = "linux"))]
     let menu = Menu::with_items(app, &[&app_menu, &edit_menu, &view_menu, &window_menu])?;
     Ok((menu, team_room_item, user_chat_item))

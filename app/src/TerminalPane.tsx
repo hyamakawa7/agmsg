@@ -76,7 +76,7 @@ export function TerminalPane({
     let disposed = false;
     const term = new Terminal({
       fontSize,
-      fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+      fontFamily: "'Ubuntu Mono', 'DejaVu Sans Mono', Menlo, Monaco, 'Courier New', monospace",
       cursorBlink: true,
       theme: { background: "#0b0e14", foreground: "#c5c8c6" },
     });

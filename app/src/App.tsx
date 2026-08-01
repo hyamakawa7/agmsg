@@ -120,6 +120,16 @@ export function shellPaneFrom(info: LoginShellInfo | null, id: string, label: st
   return { id, label, cmd: info.cmd, args: info.args, cwd, native: false, shell: true };
 }
 
+/**
+ * Returns the root CSS class needed for the macOS overlay title-bar layout.
+ * Tauri's webview user agent is the only platform signal already available to
+ * this frontend; keeping the check pure makes the intentional Windows/Linux
+ * non-overlay layout testable without a DOM or an OS plugin dependency.
+ */
+export function platformClassForUserAgent(userAgent: string): string {
+  return /\b(?:macintosh|mac os x)\b/i.test(userAgent) ? "platform-macos" : "";
+}
+
 // Whether openShellTab's new window should still be committed after its
 // getLoginShell await — false if the user switched teams while it was in
 // flight. Committing anyway would silently add a window under the stale
@@ -305,6 +315,7 @@ export function shouldShowOutdatedBanner<T>(
 
 export default function App() {
   const { t } = useTranslation();
+  const platformClass = platformClassForUserAgent(navigator.userAgent);
   // Set when a startup call that the whole app depends on (loading teams)
   // fails outright — most commonly agmsg isn't installed at
   // ~/.agents/skills/agmsg. Without this the app would just render an empty
@@ -1789,7 +1800,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="app" onClick={closeAllMenus}>
+    <div className={platformClass ? `app ${platformClass}` : "app"} onClick={closeAllMenus}>
       {dragPointer && swapSource && (
         // Follows the cursor during a pane-header pointer-drag — the visible
         // replacement for the old HTML5 setDragImage ghost (which relied on

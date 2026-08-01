@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasUnsafeDropPath,
   joinDroppedPaths,
+  platformClassForUserAgent,
   resolveFileDropTarget,
   shellPaneFrom,
   shellSplitStillValid,
@@ -10,6 +11,19 @@ import {
   shouldSuppressClickAfterDrag,
   type LoginShellInfo,
 } from "./App";
+
+describe("platformClassForUserAgent", () => {
+  it("marks macOS webviews for the overlay title-bar layout", () => {
+    expect(platformClassForUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15")).toBe(
+      "platform-macos",
+    );
+  });
+
+  it("leaves Linux and Windows webviews on the normal title-bar layout", () => {
+    expect(platformClassForUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")).toBe("");
+    expect(platformClassForUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")).toBe("");
+  });
+});
 
 describe("shouldShowOutdatedBanner", () => {
   it("shows when outdated, not updating, and not dismissed", () => {
