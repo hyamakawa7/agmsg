@@ -148,6 +148,7 @@ fn import_login_shell_path(app: &AppHandle) {
 /// priority order. The callers gather the sources (environment, account
 /// database, and fallback files) outside this function so the precedence can
 /// be tested without invoking external commands or reading the host system.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn select_login_shell(
     shell: Option<&str>,
     account_shell: Option<&str>,
@@ -165,6 +166,7 @@ fn select_login_shell(
 /// Extracts the login shell (the seventh colon-separated field) for `user`
 /// from a passwd/getent response. Keeping this parser pure also lets the
 /// Linux lookup order be tested with representative records.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn passwd_shell_for_user(contents: &str, user: &str) -> Option<String> {
     contents.lines().find_map(|line| {
         let mut fields = line.split(':');
@@ -176,28 +178,64 @@ fn passwd_shell_for_user(contents: &str, user: &str) -> Option<String> {
     })
 }
 
+/// Resolves a login shell while keeping account-file probes lazy. A process
+/// launched from a terminal normally has a valid `$SHELL`; in that case no
+/// `getent`, `dscl`, or passwd-file lookup should run at all. When `$SHELL` is
+/// empty, the account probe wins and the fallback-file probe runs only when
+/// the account probe has no usable value. The closures make those guarantees
+/// observable in unit tests without shelling out from the test process.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn resolve_login_shell_with_probes<AccountProbe, PasswdProbe>(
+    shell: Option<&str>,
+    account_probe: AccountProbe,
+    passwd_probe: PasswdProbe,
+    fallback: &str,
+) -> String
+where
+    AccountProbe: FnOnce() -> Option<String>,
+    PasswdProbe: FnOnce() -> Option<String>,
+{
+    if let Some(shell) = shell.filter(|value| !value.is_empty()) {
+        return shell.to_string();
+    }
+    let account_shell = account_probe().filter(|value| !value.is_empty());
+    if let Some(shell) = account_shell {
+        return shell;
+    }
+    let passwd_shell = passwd_probe().filter(|value| !value.is_empty());
+    select_login_shell(None, None, passwd_shell.as_deref(), fallback)
+}
+
 /// Resolves the user's login shell for import_login_shell_path() on Linux.
 /// Ubuntu does not provide macOS's `dscl`; use the account's configured shell
 /// from `getent`, then `/etc/passwd`, before the stable `/bin/bash` fallback.
 #[cfg(target_os = "linux")]
 fn resolve_login_shell() -> String {
-    let shell = std::env::var("SHELL").ok();
+    let shell = std::env::var("SHELL").ok().filter(|value| !value.is_empty());
     let user = std::env::var("USER").unwrap_or_default();
-    let (getent_shell, passwd_shell) = if user.is_empty() {
-        (None, None)
-    } else {
-        let getent_shell = std::process::Command::new("getent")
-            .args(["passwd", &user])
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| passwd_shell_for_user(&String::from_utf8_lossy(&output.stdout), &user));
-        let passwd_shell = std::fs::read_to_string("/etc/passwd")
-            .ok()
-            .and_then(|contents| passwd_shell_for_user(&contents, &user));
-        (getent_shell, passwd_shell)
-    };
-    select_login_shell(shell.as_deref(), getent_shell.as_deref(), passwd_shell.as_deref(), "/bin/bash")
+    resolve_login_shell_with_probes(
+        shell.as_deref(),
+        || {
+            if user.is_empty() {
+                return None;
+            }
+            std::process::Command::new("getent")
+                .args(["passwd", &user])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| passwd_shell_for_user(&String::from_utf8_lossy(&output.stdout), &user))
+        },
+        || {
+            if user.is_empty() {
+                return None;
+            }
+            std::fs::read_to_string("/etc/passwd")
+                .ok()
+                .and_then(|contents| passwd_shell_for_user(&contents, &user))
+        },
+        "/bin/bash",
+    )
 }
 
 /// Resolves the user's login shell for import_login_shell_path() on macOS.
@@ -206,25 +244,30 @@ fn resolve_login_shell() -> String {
 /// `/bin/zsh` preserves the existing macOS fallback.
 #[cfg(all(unix, not(target_os = "linux")))]
 fn resolve_login_shell() -> String {
-    let shell = std::env::var("SHELL").ok();
+    let shell = std::env::var("SHELL").ok().filter(|value| !value.is_empty());
     let user = std::env::var("USER").unwrap_or_default();
-    let account_shell = if user.is_empty() {
-        None
-    } else {
-        std::process::Command::new("dscl")
-            .args([".", "-read", &format!("/Users/{user}"), "UserShell"])
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| {
-                let text = String::from_utf8_lossy(&output.stdout);
-                text.trim()
-                    .strip_prefix("UserShell: ")
-                    .filter(|shell| !shell.is_empty())
-                    .map(str::to_owned)
-            })
-    };
-    select_login_shell(shell.as_deref(), account_shell.as_deref(), None, "/bin/zsh")
+    resolve_login_shell_with_probes(
+        shell.as_deref(),
+        || {
+            if user.is_empty() {
+                return None;
+            }
+            std::process::Command::new("dscl")
+                .args([".", "-read", &format!("/Users/{user}"), "UserShell"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| {
+                    let text = String::from_utf8_lossy(&output.stdout);
+                    text.trim()
+                        .strip_prefix("UserShell: ")
+                        .filter(|shell| !shell.is_empty())
+                        .map(str::to_owned)
+                })
+        },
+        || None,
+        "/bin/zsh",
+    )
 }
 
 /// What to spawn for the free-shell tab (App.tsx's "+" tab and a tab's "Open
@@ -266,6 +309,7 @@ fn login_shell() -> LoginShellInfo {
 /// Resolves the path-import log file without touching Tauri state. macOS keeps
 /// the existing `~/Library/Logs/agmsg` path; Linux uses the directory Tauri
 /// derives from the app identifier (`app_log_dir`).
+#[cfg_attr(not(unix), allow(dead_code))]
 fn path_import_log_path(
     is_linux: bool,
     home: &std::path::Path,
@@ -287,7 +331,13 @@ fn log_path_import(app: &AppHandle, message: &str) {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
     #[cfg(target_os = "linux")]
-    let app_log_dir = app.path().app_log_dir().ok();
+    let app_log_dir = match app.path().app_log_dir() {
+        Ok(dir) => Some(dir),
+        Err(error) => {
+            eprintln!("warning: couldn't resolve Linux app log directory: {error}");
+            None
+        }
+    };
     #[cfg(not(target_os = "linux"))]
     let app_log_dir = None;
     let Some(path) = path_import_log_path(cfg!(target_os = "linux"), &home, app_log_dir.as_deref()) else {
@@ -366,7 +416,13 @@ fn make_menu(app: &AppHandle, lang: &str) -> tauri::Result<(Menu<Wry>, CheckMenu
             // GTK does not implement muda's predefined quit item reliably.
             // Keep the operation visible as a regular item and handle it in
             // on_menu_event below so startup and shutdown stay deterministic.
-            &MenuItem::with_id(app, QUIT_MENU_ID, m_name("quit"), true, None::<&str>)?,
+            &MenuItem::with_id(
+                app,
+                QUIT_MENU_ID,
+                m_name("quit"),
+                true,
+                Some("CmdOrCtrl+Q"),
+            )?,
         ],
     )?;
     #[cfg(not(target_os = "linux"))]
@@ -770,7 +826,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{passwd_shell_for_user, path_import_log_path, select_login_shell};
+    use super::{
+        passwd_shell_for_user, path_import_log_path, resolve_login_shell_with_probes, select_login_shell,
+    };
+    use std::cell::Cell;
     use std::path::Path;
 
     #[test]
@@ -788,6 +847,63 @@ mod tests {
             "/bin/bash"
         );
         assert_eq!(select_login_shell(None, None, None, "/bin/sh"), "/bin/sh");
+    }
+
+    #[test]
+    fn login_shell_probes_are_lazy_and_short_circuit() {
+        let getent_calls = Cell::new(0);
+        let passwd_calls = Cell::new(0);
+        let shell = resolve_login_shell_with_probes(
+            Some("/bin/zsh"),
+            || {
+                getent_calls.set(getent_calls.get() + 1);
+                Some("/bin/fish".into())
+            },
+            || {
+                passwd_calls.set(passwd_calls.get() + 1);
+                Some("/bin/bash".into())
+            },
+            "/bin/sh",
+        );
+        assert_eq!(shell, "/bin/zsh");
+        assert_eq!(getent_calls.get(), 0, "SHELL must avoid the account probe");
+        assert_eq!(passwd_calls.get(), 0, "SHELL must avoid the passwd probe");
+
+        let getent_calls = Cell::new(0);
+        let passwd_calls = Cell::new(0);
+        let shell = resolve_login_shell_with_probes(
+            None,
+            || {
+                getent_calls.set(getent_calls.get() + 1);
+                Some("/bin/fish".into())
+            },
+            || {
+                passwd_calls.set(passwd_calls.get() + 1);
+                Some("/bin/bash".into())
+            },
+            "/bin/sh",
+        );
+        assert_eq!(shell, "/bin/fish");
+        assert_eq!(getent_calls.get(), 1);
+        assert_eq!(passwd_calls.get(), 0, "a valid getent result must avoid passwd");
+
+        let getent_calls = Cell::new(0);
+        let passwd_calls = Cell::new(0);
+        let shell = resolve_login_shell_with_probes(
+            None,
+            || {
+                getent_calls.set(getent_calls.get() + 1);
+                Some(String::new())
+            },
+            || {
+                passwd_calls.set(passwd_calls.get() + 1);
+                Some("/bin/bash".into())
+            },
+            "/bin/sh",
+        );
+        assert_eq!(shell, "/bin/bash");
+        assert_eq!(getent_calls.get(), 1);
+        assert_eq!(passwd_calls.get(), 1, "an empty getent result must fall back to passwd");
     }
 
     #[test]

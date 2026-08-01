@@ -479,7 +479,7 @@ jobs:
   # to 26.04. Revisit this pin when the real Ubuntu target is upgraded or when
   # GitHub retires the label.
   app-check-linux:
-    name: app typecheck (ubuntu-24.04)
+    name: app typecheck (linux)
     needs: changes
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
