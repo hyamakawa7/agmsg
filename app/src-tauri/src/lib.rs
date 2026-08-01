@@ -104,18 +104,18 @@ fn save_zoom(app: &AppHandle, zoom: f64) {
 /// (MOTD, prompts) — wrapping the $PATH readout in unique markers and
 /// extracting just what's between them keeps that noise from corrupting it.
 #[cfg(unix)]
-fn import_login_shell_path() {
+fn import_login_shell_path(app: &AppHandle) {
     const START: &str = "__AGMSG_PATH_START__";
     const END: &str = "__AGMSG_PATH_END__";
     let shell = resolve_login_shell();
-    log_path_import(&format!("resolved login shell: {shell}"));
+    log_path_import(app, &format!("resolved login shell: {shell}"));
     let script = format!("printf '{START}%s{END}' \"$PATH\"");
     let output = match std::process::Command::new(&shell).args(["-ilc", &script]).output() {
         Ok(o) => o,
         Err(e) => {
             let msg = format!("couldn't run login shell ({shell}) to import PATH: {e}");
             eprintln!("warning: {msg}");
-            log_path_import(&msg);
+            log_path_import(app, &msg);
             return;
         }
     };
@@ -129,7 +129,7 @@ fn import_login_shell_path() {
     });
     match parsed {
         Some(path) if !path.is_empty() => {
-            log_path_import(&format!("imported PATH: {path}"));
+            log_path_import(app, &format!("imported PATH: {path}"));
             std::env::set_var("PATH", path);
             let _ = IMPORTED_PATH.set(path.to_string());
         }
@@ -139,42 +139,92 @@ fn import_login_shell_path() {
                 stdout.trim()
             );
             eprintln!("warning: {msg}");
-            log_path_import(&msg);
+            log_path_import(app, &msg);
         }
     }
 }
 
-/// Resolves the user's login shell for import_login_shell_path() above.
-/// $SHELL isn't reliably set for a Finder/LaunchServices-launched GUI
-/// process — confirmed on real hardware: present in the same user's
-/// Terminal session, absent (or stale) when the app itself is launched via
-/// Finder. `dscl` asks Directory Services directly for the account's
-/// configured shell, independent of whatever this process's own
-/// environment happens to have inherited. /bin/zsh (macOS's default shell
-/// since Catalina) is the last-resort fallback if even that comes up empty.
-#[cfg(unix)]
+/// Selects the first non-empty shell source in the platform-specific
+/// priority order. The callers gather the sources (environment, account
+/// database, and fallback files) outside this function so the precedence can
+/// be tested without invoking external commands or reading the host system.
+fn select_login_shell(
+    shell: Option<&str>,
+    account_shell: Option<&str>,
+    passwd_shell: Option<&str>,
+    fallback: &str,
+) -> String {
+    [shell, account_shell, passwd_shell]
+        .into_iter()
+        .flatten()
+        .find(|candidate| !candidate.is_empty())
+        .unwrap_or(fallback)
+        .to_string()
+}
+
+/// Extracts the login shell (the seventh colon-separated field) for `user`
+/// from a passwd/getent response. Keeping this parser pure also lets the
+/// Linux lookup order be tested with representative records.
+fn passwd_shell_for_user(contents: &str, user: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let mut fields = line.split(':');
+        let name = fields.next()?;
+        if name != user {
+            return None;
+        }
+        fields.nth(5).filter(|shell| !shell.is_empty()).map(str::to_owned)
+    })
+}
+
+/// Resolves the user's login shell for import_login_shell_path() on Linux.
+/// Ubuntu does not provide macOS's `dscl`; use the account's configured shell
+/// from `getent`, then `/etc/passwd`, before the stable `/bin/bash` fallback.
+#[cfg(target_os = "linux")]
 fn resolve_login_shell() -> String {
-    if let Ok(s) = std::env::var("SHELL") {
-        if !s.is_empty() {
-            return s;
-        }
-    }
+    let shell = std::env::var("SHELL").ok();
     let user = std::env::var("USER").unwrap_or_default();
-    if !user.is_empty() {
-        if let Ok(output) =
-            std::process::Command::new("dscl").args([".", "-read", &format!("/Users/{user}"), "UserShell"]).output()
-        {
-            if output.status.success() {
+    let (getent_shell, passwd_shell) = if user.is_empty() {
+        (None, None)
+    } else {
+        let getent_shell = std::process::Command::new("getent")
+            .args(["passwd", &user])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| passwd_shell_for_user(&String::from_utf8_lossy(&output.stdout), &user));
+        let passwd_shell = std::fs::read_to_string("/etc/passwd")
+            .ok()
+            .and_then(|contents| passwd_shell_for_user(&contents, &user));
+        (getent_shell, passwd_shell)
+    };
+    select_login_shell(shell.as_deref(), getent_shell.as_deref(), passwd_shell.as_deref(), "/bin/bash")
+}
+
+/// Resolves the user's login shell for import_login_shell_path() on macOS.
+/// `$SHELL` remains the fastest path; `dscl` reads the configured account
+/// shell when a Finder-launched process did not inherit that variable, and
+/// `/bin/zsh` preserves the existing macOS fallback.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn resolve_login_shell() -> String {
+    let shell = std::env::var("SHELL").ok();
+    let user = std::env::var("USER").unwrap_or_default();
+    let account_shell = if user.is_empty() {
+        None
+    } else {
+        std::process::Command::new("dscl")
+            .args([".", "-read", &format!("/Users/{user}"), "UserShell"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| {
                 let text = String::from_utf8_lossy(&output.stdout);
-                if let Some(shell) = text.trim().strip_prefix("UserShell: ") {
-                    if !shell.is_empty() {
-                        return shell.to_string();
-                    }
-                }
-            }
-        }
-    }
-    "/bin/zsh".into()
+                text.trim()
+                    .strip_prefix("UserShell: ")
+                    .filter(|shell| !shell.is_empty())
+                    .map(str::to_owned)
+            })
+    };
+    select_login_shell(shell.as_deref(), account_shell.as_deref(), None, "/bin/zsh")
 }
 
 /// What to spawn for the free-shell tab (App.tsx's "+" tab and a tab's "Open
@@ -213,22 +263,44 @@ fn login_shell() -> LoginShellInfo {
     }
 }
 
-/// Appends a timestamped line to ~/Library/Logs/agmsg/path-import.log. The
-/// only real diagnostic available for import_login_shell_path(): it runs
-/// before the webview (and thus DevTools) exists, and its failure mode was
-/// otherwise silent — a prior Finder-launch gate failure took a slow
-/// back-and-forth to root-cause because all it did on failure was warn to
-/// stderr, which nothing launched from Finder is around to see.
+/// Resolves the path-import log file without touching Tauri state. macOS keeps
+/// the existing `~/Library/Logs/agmsg` path; Linux uses the directory Tauri
+/// derives from the app identifier (`app_log_dir`).
+fn path_import_log_path(
+    is_linux: bool,
+    home: &std::path::Path,
+    app_log_dir: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    if is_linux {
+        app_log_dir.map(|dir| dir.join("path-import.log"))
+    } else {
+        Some(home.join("Library/Logs/agmsg/path-import.log"))
+    }
+}
+
+/// Appends a timestamped line to the platform-specific path-import log. This
+/// runs before the webview (and thus DevTools) exists, so the file is the only
+/// durable diagnostic for a failed login-shell PATH import.
 #[cfg(unix)]
-fn log_path_import(message: &str) {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    let dir = std::path::PathBuf::from(home).join("Library/Logs/agmsg");
-    if std::fs::create_dir_all(&dir).is_err() {
+fn log_path_import(app: &AppHandle, message: &str) {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    #[cfg(target_os = "linux")]
+    let app_log_dir = app.path().app_log_dir().ok();
+    #[cfg(not(target_os = "linux"))]
+    let app_log_dir = None;
+    let Some(path) = path_import_log_path(cfg!(target_os = "linux"), &home, app_log_dir.as_deref()) else {
         return;
+    };
+    if let Some(dir) = path.parent() {
+        if std::fs::create_dir_all(dir).is_err() {
+            return;
+        }
     }
     use std::io::Write;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("path-import.log")) {
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "[{now}] {message}");
     }
 }
@@ -281,6 +353,23 @@ fn make_menu(app: &AppHandle, lang: &str) -> tauri::Result<(Menu<Wry>, CheckMenu
     )?;
     let check_updates =
         MenuItem::with_id(app, CHECK_UPDATES_ID, m("checkForUpdates"), true, None::<&str>)?;
+    #[cfg(target_os = "linux")]
+    let app_menu = Submenu::with_items(
+        app,
+        name,
+        true,
+        &[
+            &about,
+            &PredefinedMenuItem::separator(app)?,
+            &check_updates,
+            &PredefinedMenuItem::separator(app)?,
+            // GTK does not implement muda's predefined quit item reliably.
+            // Keep the operation visible as a regular item and handle it in
+            // on_menu_event below so startup and shutdown stay deterministic.
+            &MenuItem::with_id(app, QUIT_MENU_ID, m_name("quit"), true, None::<&str>)?,
+        ],
+    )?;
+    #[cfg(not(target_os = "linux"))]
     let app_menu = Submenu::with_items(
         app,
         name,
@@ -299,6 +388,19 @@ fn make_menu(app: &AppHandle, lang: &str) -> tauri::Result<(Menu<Wry>, CheckMenu
             &PredefinedMenuItem::quit(app, Some(&m_name("quit")))?,
         ],
     )?;
+    #[cfg(target_os = "linux")]
+    let edit_menu = Submenu::with_items(
+        app,
+        m("editMenu"),
+        true,
+        &[
+            &PredefinedMenuItem::cut(app, Some(&m("cut")))?,
+            &PredefinedMenuItem::copy(app, Some(&m("copy")))?,
+            &PredefinedMenuItem::paste(app, Some(&m("paste")))?,
+            &PredefinedMenuItem::select_all(app, Some(&m("selectAll")))?,
+        ],
+    )?;
+    #[cfg(not(target_os = "linux"))]
     let edit_menu = Submenu::with_items(
         app,
         m("editMenu"),
@@ -362,6 +464,7 @@ fn make_menu(app: &AppHandle, lang: &str) -> tauri::Result<(Menu<Wry>, CheckMenu
             &MenuItem::with_id(app, ZOOM_RESET_ID, m("actualSize"), true, Some("CmdOrCtrl+0"))?,
         ],
     )?;
+    #[cfg(not(target_os = "linux"))]
     let window_menu = Submenu::with_items(
         app,
         m("windowMenu"),
@@ -372,6 +475,9 @@ fn make_menu(app: &AppHandle, lang: &str) -> tauri::Result<(Menu<Wry>, CheckMenu
             &PredefinedMenuItem::close_window(app, Some(&m("closeWindow")))?,
         ],
     )?;
+    #[cfg(target_os = "linux")]
+    let menu = Menu::with_items(app, &[&app_menu, &edit_menu, &view_menu])?;
+    #[cfg(not(target_os = "linux"))]
     let menu = Menu::with_items(app, &[&app_menu, &edit_menu, &view_menu, &window_menu])?;
     Ok((menu, team_room_item, user_chat_item))
 }
@@ -382,6 +488,7 @@ const ZOOM_IN_ID: &str = "zoom_in";
 const ZOOM_OUT_ID: &str = "zoom_out";
 const ZOOM_RESET_ID: &str = "zoom_reset";
 const CHECK_UPDATES_ID: &str = "check_updates";
+const QUIT_MENU_ID: &str = "quit_app";
 const PANE_LAYOUT_VERTICAL_ID: &str = "pane_layout_vertical";
 const PANE_LAYOUT_HORIZONTAL_ID: &str = "pane_layout_horizontal";
 const PANE_LAYOUT_TILE_ID: &str = "pane_layout_tile";
@@ -588,6 +695,8 @@ pub fn run() {
                     _ => "tile",
                 };
                 let _ = app.emit("set-pane-layout", layout);
+            } else if id == QUIT_MENU_ID {
+                app.exit(0);
             } else if id == CHECK_UPDATES_ID {
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
@@ -606,7 +715,7 @@ pub fn run() {
             // Windows doesn't have this problem (PATH comes from the
             // registry regardless of launch method), hence unix-only.
             #[cfg(unix)]
-            import_login_shell_path();
+            import_login_shell_path(app.handle());
 
             // Restore the zoom level saved on the last quit/change — .manage()
             // above only had 1.0 to work with (no AppHandle yet to read the
@@ -657,4 +766,55 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{passwd_shell_for_user, path_import_log_path, select_login_shell};
+    use std::path::Path;
+
+    #[test]
+    fn login_shell_precedence_is_environment_then_account_then_passwd_then_fallback() {
+        assert_eq!(
+            select_login_shell(Some("/bin/zsh"), Some("/bin/fish"), Some("/bin/bash"), "/bin/sh"),
+            "/bin/zsh"
+        );
+        assert_eq!(
+            select_login_shell(Some(""), Some("/bin/fish"), Some("/bin/bash"), "/bin/sh"),
+            "/bin/fish"
+        );
+        assert_eq!(
+            select_login_shell(None, Some(""), Some("/bin/bash"), "/bin/sh"),
+            "/bin/bash"
+        );
+        assert_eq!(select_login_shell(None, None, None, "/bin/sh"), "/bin/sh");
+    }
+
+    #[test]
+    fn passwd_shell_parser_reads_the_seventh_field_for_the_requested_user() {
+        let records = "root:x:0:0:root:/root:/bin/bash\nalice:x:1000:1000:Alice:/home/alice:/bin/fish\n";
+        assert_eq!(passwd_shell_for_user(records, "alice"), Some("/bin/fish".into()));
+        assert_eq!(passwd_shell_for_user(records, "nobody"), None);
+    }
+
+    #[test]
+    fn macos_log_path_keeps_the_existing_location() {
+        let home = Path::new("/home/alice");
+        let app_log_dir = Path::new("/home/alice/.local/share/cc.agmsg.app/logs");
+        assert_eq!(
+            path_import_log_path(false, home, Some(app_log_dir)),
+            Some(Path::new("/home/alice/Library/Logs/agmsg/path-import.log").into())
+        );
+    }
+
+    #[test]
+    fn linux_log_path_uses_tauri_app_log_dir() {
+        let home = Path::new("/home/alice");
+        let app_log_dir = Path::new("/home/alice/.local/share/cc.agmsg.app/logs");
+        assert_eq!(
+            path_import_log_path(true, home, Some(app_log_dir)),
+            Some(Path::new("/home/alice/.local/share/cc.agmsg.app/logs/path-import.log").into())
+        );
+        assert_eq!(path_import_log_path(true, home, None), None);
+    }
 }
