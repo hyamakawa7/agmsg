@@ -75,9 +75,10 @@ pub(crate) const APPIMAGE_CHILD_ENV_SPECS: [AppImageEnvSpec; 4] = [
 fn valid_appdir(appdir: Option<&str>) -> Option<&str> {
     let appdir = appdir?;
     let trimmed = appdir.trim_end_matches('/');
+    // APPDIR is an AppImage/Unix path; do not use the host OS path grammar.
     if trimmed.is_empty()
         || trimmed == "/"
-        || !std::path::Path::new(trimmed).is_absolute()
+        || !trimmed.starts_with('/')
     {
         return None;
     }
