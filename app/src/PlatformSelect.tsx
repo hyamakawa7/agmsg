@@ -49,13 +49,67 @@ export function nextPlatformSelectIndex(
   }
 }
 
-type PopupPosition = {
-  top: number;
+export type PlatformSelectPopupPosition = {
+  top?: number;
+  bottom?: number;
   left: number;
   width: number;
   maxHeight: number;
   placement: "above" | "below";
 };
+
+type PopupAnchorRect = Pick<DOMRectReadOnly, "top" | "bottom" | "left" | "width">;
+
+type PopupViewport = {
+  width: number;
+  height: number;
+};
+
+/**
+ * Calculate the fixed-position popup geometry from viewport coordinates.
+ *
+ * Above placement deliberately uses a bottom anchor instead of estimating the
+ * popup's rendered height. That keeps the popup edge attached to the trigger
+ * even when its actual content is shorter than the max-height estimate.
+ */
+export function calculatePlatformSelectPopupPosition(
+  rect: PopupAnchorRect,
+  viewport: PopupViewport,
+  optionCount: number,
+): PlatformSelectPopupPosition {
+  const viewportPadding = 8;
+  // .platform-select-option is 13px × 1.5 line-height plus 12px vertical
+  // padding (about 32px); keep this estimate coupled to its CSS height.
+  const estimatedHeight = Math.min(280, Math.max(48, optionCount * 32 + 8));
+  const belowSpace = Math.max(0, viewport.height - rect.bottom - viewportPadding);
+  const aboveSpace = Math.max(0, rect.top - viewportPadding);
+  const placement: PlatformSelectPopupPosition["placement"] =
+    belowSpace >= estimatedHeight || belowSpace >= aboveSpace ? "below" : "above";
+  const availableSpace = placement === "below" ? belowSpace : aboveSpace;
+  const maxHeight = Math.max(48, Math.min(280, availableSpace));
+  const width = Math.min(rect.width, Math.max(0, viewport.width - viewportPadding * 2));
+  const left = Math.max(
+    viewportPadding,
+    Math.min(rect.left, viewport.width - viewportPadding - width),
+  );
+
+  if (placement === "above") {
+    return {
+      bottom: viewport.height - rect.top,
+      left,
+      width,
+      maxHeight,
+      placement,
+    };
+  }
+
+  const unclampedTop = rect.bottom;
+  const top = Math.max(
+    viewportPadding,
+    Math.min(unclampedTop, viewport.height - viewportPadding - maxHeight),
+  );
+  return { top, left, width, maxHeight, placement };
+}
 
 function NativeSelect(props: PlatformSelectProps) {
   return (
@@ -86,7 +140,7 @@ function LinuxSelect(props: PlatformSelectProps) {
   );
   const [activeIndex, setActiveIndex] = useState(selectedIndex);
   const [open, setOpen] = useState(false);
-  const [popupPosition, setPopupPosition] = useState<PopupPosition | null>(null);
+  const [popupPosition, setPopupPosition] = useState<PlatformSelectPopupPosition | null>(null);
 
   useEffect(() => {
     if (!open) setActiveIndex(selectedIndex);
@@ -95,28 +149,13 @@ function LinuxSelect(props: PlatformSelectProps) {
   const positionPopup = useCallback(() => {
     const trigger = triggerRef.current;
     if (!trigger || typeof window === "undefined") return;
-    const rect = trigger.getBoundingClientRect();
-    const viewportPadding = 8;
-    // .platform-select-option is 13px × 1.5 line-height plus 12px vertical
-    // padding (about 32px); keep this estimate coupled to its CSS height.
-    const estimatedHeight = Math.min(280, Math.max(48, props.options.length * 32 + 8));
-    const belowSpace = Math.max(0, window.innerHeight - rect.bottom - viewportPadding);
-    const aboveSpace = Math.max(0, rect.top - viewportPadding);
-    const placement: PopupPosition["placement"] =
-      belowSpace >= estimatedHeight || belowSpace >= aboveSpace ? "below" : "above";
-    const availableSpace = placement === "below" ? belowSpace : aboveSpace;
-    const maxHeight = Math.max(48, Math.min(280, availableSpace));
-    const unclampedTop = placement === "below" ? rect.bottom : rect.top - maxHeight;
-    const top = Math.max(
-      viewportPadding,
-      Math.min(unclampedTop, window.innerHeight - viewportPadding - maxHeight),
+    setPopupPosition(
+      calculatePlatformSelectPopupPosition(
+        trigger.getBoundingClientRect(),
+        { width: window.innerWidth, height: window.innerHeight },
+        props.options.length,
+      ),
     );
-    const width = Math.min(rect.width, Math.max(0, window.innerWidth - viewportPadding * 2));
-    const left = Math.max(
-      viewportPadding,
-      Math.min(rect.left, window.innerWidth - viewportPadding - width),
-    );
-    setPopupPosition({ top, left, width, maxHeight, placement });
   }, [props.options.length]);
 
   const closeMenu = useCallback(
@@ -262,6 +301,7 @@ function LinuxSelect(props: PlatformSelectProps) {
   const popupStyle: CSSProperties | undefined = popupPosition
     ? {
         top: popupPosition.top,
+        bottom: popupPosition.bottom,
         left: popupPosition.left,
         width: popupPosition.width,
         maxHeight: popupPosition.maxHeight,
