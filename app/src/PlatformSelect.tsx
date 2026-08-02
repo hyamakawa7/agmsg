@@ -49,14 +49,15 @@ export function nextPlatformSelectIndex(
   }
 }
 
-export type PlatformSelectPopupPosition = {
-  top?: number;
-  bottom?: number;
+type PlatformSelectPopupPositionBase = {
   left: number;
   width: number;
   maxHeight: number;
-  placement: "above" | "below";
 };
+
+export type PlatformSelectPopupPosition =
+  | (PlatformSelectPopupPositionBase & { placement: "above"; bottom: number })
+  | (PlatformSelectPopupPositionBase & { placement: "below"; top: number });
 
 type PopupAnchorRect = Pick<DOMRectReadOnly, "top" | "bottom" | "left" | "width">;
 
@@ -86,7 +87,9 @@ export function calculatePlatformSelectPopupPosition(
   const placement: PlatformSelectPopupPosition["placement"] =
     belowSpace >= estimatedHeight || belowSpace >= aboveSpace ? "below" : "above";
   const availableSpace = placement === "below" ? belowSpace : aboveSpace;
-  const maxHeight = Math.max(48, Math.min(280, availableSpace));
+  // Keep the rendered box within the available side of the viewport, even
+  // when the trigger leaves less than the normal 48px minimum.
+  const maxHeight = Math.max(0, Math.min(280, availableSpace));
   const width = Math.min(rect.width, Math.max(0, viewport.width - viewportPadding * 2));
   const left = Math.max(
     viewportPadding,
@@ -103,12 +106,7 @@ export function calculatePlatformSelectPopupPosition(
     };
   }
 
-  const unclampedTop = rect.bottom;
-  const top = Math.max(
-    viewportPadding,
-    Math.min(unclampedTop, viewport.height - viewportPadding - maxHeight),
-  );
-  return { top, left, width, maxHeight, placement };
+  return { top: rect.bottom, left, width, maxHeight, placement };
 }
 
 function NativeSelect(props: PlatformSelectProps) {
@@ -178,7 +176,6 @@ function LinuxSelect(props: PlatformSelectProps) {
       setActiveIndex(selectedIndex);
       setOpen(true);
       positionPopup();
-      if (typeof window !== "undefined") window.requestAnimationFrame(positionPopup);
     },
     [positionPopup, props.disabled, selectedIndex],
   );
@@ -300,8 +297,9 @@ function LinuxSelect(props: PlatformSelectProps) {
   const triggerClassName = ["platform-select-trigger", props.className].filter(Boolean).join(" ");
   const popupStyle: CSSProperties | undefined = popupPosition
     ? {
-        top: popupPosition.top,
-        bottom: popupPosition.bottom,
+        ...(popupPosition.placement === "above"
+          ? { bottom: popupPosition.bottom }
+          : { top: popupPosition.top }),
         left: popupPosition.left,
         width: popupPosition.width,
         maxHeight: popupPosition.maxHeight,

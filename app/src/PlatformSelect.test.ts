@@ -40,8 +40,10 @@ describe("calculatePlatformSelectPopupPosition", () => {
     );
 
     expect(position.placement).toBe("above");
+    if (position.placement !== "above") throw new Error("expected above placement");
     expect(position.bottom).toBe(100);
-    expect(position.top).toBeUndefined();
+    expect("top" in position).toBe(false);
+    expect(position.maxHeight).toBeLessThanOrEqual(900 - 8);
   });
 
   it("keeps the existing trigger-bottom anchor for below placement", () => {
@@ -52,7 +54,35 @@ describe("calculatePlatformSelectPopupPosition", () => {
     );
 
     expect(position.placement).toBe("below");
+    if (position.placement !== "below") throw new Error("expected below placement");
     expect(position.top).toBe(140);
-    expect(position.bottom).toBeUndefined();
+    expect("bottom" in position).toBe(false);
+    expect(position.maxHeight).toBeLessThanOrEqual(1000 - 140 - 8);
+  });
+
+  it("chooses the wider side when neither side fits the estimate", () => {
+    const position = calculatePlatformSelectPopupPosition(
+      { top: 200, bottom: 940, left: 100, width: 180 },
+      viewport,
+      12,
+    );
+
+    expect(position.placement).toBe("above");
+    expect(position.maxHeight).toBeLessThanOrEqual(200 - 8);
+  });
+
+  it("keeps an extreme zero-space popup inside the viewport", () => {
+    const extremeViewport = { width: 320, height: 100 };
+    const position = calculatePlatformSelectPopupPosition(
+      { top: 0, bottom: 100, left: 10, width: 120 },
+      extremeViewport,
+      20,
+    );
+
+    expect(position.placement).toBe("below");
+    if (position.placement !== "below") throw new Error("expected below placement");
+    expect(position.top).toBe(100);
+    expect(position.maxHeight).toBe(0);
+    expect(position.top + position.maxHeight).toBeLessThanOrEqual(extremeViewport.height);
   });
 });
