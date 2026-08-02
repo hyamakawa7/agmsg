@@ -193,9 +193,19 @@ fn bash_command() -> Result<std::process::Command, String> {
     // child implicitly inheriting the process's own (mutated) environment.
     // No-op on Windows / if the import never ran or failed.
     if let Some(path) = crate::imported_path() {
-        cmd.env("PATH", path);
+        match crate::appimage_env_action_with_value(crate::APPIMAGE_PATH_ENV, Some(path)) {
+            crate::AppImageLibraryPathAction::Unchanged => {
+                cmd.env("PATH", path);
+            }
+            crate::AppImageLibraryPathAction::Set(path) => {
+                cmd.env("PATH", path);
+            }
+            crate::AppImageLibraryPathAction::Remove => {
+                cmd.env_remove("PATH");
+            }
+        }
     } else {
-        match crate::appimage_env_action("PATH") {
+        match crate::appimage_env_action(crate::APPIMAGE_PATH_ENV) {
             crate::AppImageLibraryPathAction::Unchanged => {}
             crate::AppImageLibraryPathAction::Set(path) => {
                 cmd.env("PATH", path);
@@ -208,14 +218,14 @@ fn bash_command() -> Result<std::process::Command, String> {
     // AppImage's bundled runtime variables must not leak into host-side
     // scripts/CLI children. This only changes the child Command; the GUI
     // process keeps its own AppImage environment intact.
-    for variable in crate::APPIMAGE_CHILD_ENV_VARS {
-        match crate::appimage_env_action(variable) {
+    for spec in crate::APPIMAGE_CHILD_ENV_SPECS {
+        match crate::appimage_env_action(spec) {
             crate::AppImageLibraryPathAction::Unchanged => {}
             crate::AppImageLibraryPathAction::Set(value) => {
-                cmd.env(variable, value);
+                cmd.env(spec.name, value);
             }
             crate::AppImageLibraryPathAction::Remove => {
-                cmd.env_remove(variable);
+                cmd.env_remove(spec.name);
             }
         }
     }

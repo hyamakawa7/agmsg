@@ -36,6 +36,42 @@ pub(crate) enum AppImageLibraryPathAction {
     Remove,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AppImageEnvKind {
+    PathList,
+    SinglePath,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AppImageEnvSpec {
+    pub(crate) name: &'static str,
+    pub(crate) kind: AppImageEnvKind,
+}
+
+pub(crate) const APPIMAGE_PATH_ENV: AppImageEnvSpec = AppImageEnvSpec {
+    name: "PATH",
+    kind: AppImageEnvKind::PathList,
+};
+
+pub(crate) const APPIMAGE_CHILD_ENV_SPECS: [AppImageEnvSpec; 4] = [
+    AppImageEnvSpec {
+        name: "LD_LIBRARY_PATH",
+        kind: AppImageEnvKind::PathList,
+    },
+    AppImageEnvSpec {
+        name: "PYTHONPATH",
+        kind: AppImageEnvKind::PathList,
+    },
+    AppImageEnvSpec {
+        name: "PYTHONHOME",
+        kind: AppImageEnvKind::SinglePath,
+    },
+    AppImageEnvSpec {
+        name: "PERLLIB",
+        kind: AppImageEnvKind::PathList,
+    },
+];
+
 fn is_appdir_path(path: &str, appdir: &str) -> bool {
     let root = appdir.trim_end_matches('/');
     if root.is_empty() {
@@ -45,10 +81,10 @@ fn is_appdir_path(path: &str, appdir: &str) -> bool {
 }
 
 /// Decide how a child should receive one of the environment variables injected
-/// by an AppImage launcher. The variable list came from inspecting
+/// by an AppImage launcher. The fixed allowlist came from inspecting
 /// `squashfs-root/AppRun` and `apprun-hooks` (LD_LIBRARY_PATH, PYTHONPATH,
-/// PYTHONHOME, PERLLIB, plus PATH handling below); re-derive it if the Tauri
-/// CLI or linuxdeploy plugins are upgraded.
+/// PYTHONHOME, PERLLIB, and PATH); re-derive it if the Tauri CLI or linuxdeploy
+/// plugins are upgraded.
 ///
 /// LD_LIBRARY_PATH, PYTHONPATH, PERLLIB, and PATH are colon-separated lists,
 /// so only APPDIR-rooted entries are removed. PYTHONHOME is a single prefix
@@ -56,7 +92,7 @@ fn is_appdir_path(path: &str, appdir: &str) -> bool {
 /// caller applies the returned action to the child `Command`/`CommandBuilder`;
 /// this function never mutates the app process environment.
 pub(crate) fn sanitize_appimage_env(
-    variable: &str,
+    spec: AppImageEnvSpec,
     value: Option<&str>,
     appdir: Option<&str>,
 ) -> Option<String> {
@@ -69,7 +105,7 @@ pub(crate) fn sanitize_appimage_env(
     if value.is_empty() {
         return None;
     }
-    if variable == "PYTHONHOME" {
+    if spec.kind == AppImageEnvKind::SinglePath {
         if is_appdir_path(value, appdir) {
             return None;
         }
@@ -80,7 +116,7 @@ pub(crate) fn sanitize_appimage_env(
     let filtered = value
         .split(':')
         .filter(|path| {
-            let keep = !is_appdir_path(path, appdir);
+            let keep = !path.is_empty() && !is_appdir_path(path, appdir);
             removed |= !keep;
             keep
         })
@@ -94,9 +130,6 @@ pub(crate) fn sanitize_appimage_env(
         Some(value.to_owned())
     }
 }
-
-pub(crate) const APPIMAGE_CHILD_ENV_VARS: [&str; 4] =
-    ["LD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME", "PERLLIB"];
 
 #[cfg(target_os = "linux")]
 fn appimage_child_env_enabled() -> bool {
@@ -117,7 +150,7 @@ fn appimage_child_env_enabled() -> bool {
 /// operation for dev, deb, and other non-AppImage launches.
 pub(crate) fn appimage_env_action_for_context(
     is_linux_appimage: bool,
-    variable: &str,
+    spec: AppImageEnvSpec,
     value: Option<&str>,
     appdir: Option<&str>,
 ) -> AppImageLibraryPathAction {
@@ -130,20 +163,33 @@ pub(crate) fn appimage_env_action_for_context(
     let Some(value) = value else {
         return AppImageLibraryPathAction::Unchanged;
     };
-    match sanitize_appimage_env(variable, Some(value), Some(appdir)) {
+    match sanitize_appimage_env(spec, Some(value), Some(appdir)) {
         Some(sanitized) if sanitized == value => AppImageLibraryPathAction::Unchanged,
         Some(sanitized) => AppImageLibraryPathAction::Set(sanitized),
         None => AppImageLibraryPathAction::Remove,
     }
 }
 
-pub(crate) fn appimage_env_action(variable: &str) -> AppImageLibraryPathAction {
+pub(crate) fn appimage_env_action(spec: AppImageEnvSpec) -> AppImageLibraryPathAction {
     let appdir = std::env::var("APPDIR").ok();
-    let value = std::env::var(variable).ok();
+    let value = std::env::var(spec.name).ok();
     appimage_env_action_for_context(
         appimage_child_env_enabled(),
-        variable,
+        spec,
         value.as_deref(),
+        appdir.as_deref(),
+    )
+}
+
+pub(crate) fn appimage_env_action_with_value(
+    spec: AppImageEnvSpec,
+    value: Option<&str>,
+) -> AppImageLibraryPathAction {
+    let appdir = std::env::var("APPDIR").ok();
+    appimage_env_action_for_context(
+        appimage_child_env_enabled(),
+        spec,
+        value,
         appdir.as_deref(),
     )
 }
@@ -996,7 +1042,7 @@ mod tests {
     use super::{
         appimage_env_action_for_context, passwd_shell_for_user, path_import_log_path,
         resolve_login_shell_with_probes, sanitize_appimage_env, select_login_shell, updater_allowed,
-        AppImageLibraryPathAction,
+        AppImageLibraryPathAction, APPIMAGE_CHILD_ENV_SPECS, APPIMAGE_PATH_ENV,
     };
     use tauri::utils::config::BundleType;
     use std::cell::Cell;
@@ -1133,46 +1179,60 @@ mod tests {
     #[test]
     fn appimage_env_without_appdir_is_unchanged() {
         assert_eq!(
-            sanitize_appimage_env("LD_LIBRARY_PATH", Some("/usr/lib"), None),
+            sanitize_appimage_env(APPIMAGE_CHILD_ENV_SPECS[0], Some("/usr/lib"), None),
             Some("/usr/lib".into())
         );
         assert_eq!(
-            sanitize_appimage_env("LD_LIBRARY_PATH", Some(""), None),
+            sanitize_appimage_env(APPIMAGE_CHILD_ENV_SPECS[0], Some(""), None),
             Some("".into())
         );
     }
 
     #[test]
     fn appimage_env_removes_all_appdir_entries_from_colon_lists() {
-        for variable in ["LD_LIBRARY_PATH", "PYTHONPATH", "PERLLIB", "PATH"] {
+        let specs = [
+            APPIMAGE_CHILD_ENV_SPECS[0],
+            APPIMAGE_CHILD_ENV_SPECS[1],
+            APPIMAGE_CHILD_ENV_SPECS[3],
+            APPIMAGE_PATH_ENV,
+        ];
+        for spec in specs {
             assert_eq!(
                 sanitize_appimage_env(
-                    variable,
+                    spec,
                     Some("/tmp/.mount_agmsg/usr/lib:/tmp/.mount_agmsg/lib"),
                     Some("/tmp/.mount_agmsg"),
                 ),
                 None,
-                "all AppImage entries must be removed for {variable}"
+                "all AppImage entries must be removed for {}",
+                spec.name
             );
         }
     }
 
     #[test]
     fn appimage_env_keeps_non_appdir_entries_in_colon_lists() {
-        for variable in ["LD_LIBRARY_PATH", "PYTHONPATH", "PERLLIB", "PATH"] {
+        let specs = [
+            APPIMAGE_CHILD_ENV_SPECS[0],
+            APPIMAGE_CHILD_ENV_SPECS[1],
+            APPIMAGE_CHILD_ENV_SPECS[3],
+            APPIMAGE_PATH_ENV,
+        ];
+        for spec in specs {
             assert_eq!(
                 sanitize_appimage_env(
-                    variable,
+                    spec,
                     Some("/usr/lib:/tmp/.mount_agmsg/usr/lib:/opt/app"),
                     Some("/tmp/.mount_agmsg"),
                 ),
                 Some("/usr/lib:/opt/app".into()),
-                "mixed path filtering failed for {variable}"
+                "mixed path filtering failed for {}",
+                spec.name
             );
         }
         assert_eq!(
             sanitize_appimage_env(
-                "LD_LIBRARY_PATH",
+                APPIMAGE_CHILD_ENV_SPECS[0],
                 Some("/tmp/.mount_agmsg2/usr/lib"),
                 Some("/tmp/.mount_agmsg"),
             ),
@@ -1183,37 +1243,54 @@ mod tests {
     #[test]
     fn appimage_env_removes_empty_values_and_pythonhome_as_a_whole() {
         assert_eq!(
-            sanitize_appimage_env("LD_LIBRARY_PATH", Some(""), Some("/tmp/.mount_agmsg")),
+            sanitize_appimage_env(
+                APPIMAGE_CHILD_ENV_SPECS[0],
+                Some(""),
+                Some("/tmp/.mount_agmsg"),
+            ),
             None
         );
         assert_eq!(
             sanitize_appimage_env(
-                "PYTHONHOME",
+                APPIMAGE_CHILD_ENV_SPECS[2],
                 Some("/tmp/.mount_agmsg/usr"),
                 Some("/tmp/.mount_agmsg"),
             ),
             None
         );
         assert_eq!(
-            sanitize_appimage_env("PYTHONHOME", Some("/usr"), Some("/tmp/.mount_agmsg")),
+            sanitize_appimage_env(
+                APPIMAGE_CHILD_ENV_SPECS[2],
+                Some("/usr"),
+                Some("/tmp/.mount_agmsg"),
+            ),
             Some("/usr".into())
+        );
+        assert_eq!(
+            sanitize_appimage_env(
+                APPIMAGE_CHILD_ENV_SPECS[0],
+                Some("/usr/lib::/tmp/.mount_agmsg/usr/lib:"),
+                Some("/tmp/.mount_agmsg"),
+            ),
+            Some("/usr/lib".into()),
+            "empty list entries must not preserve current-directory lookup"
         );
     }
 
     #[test]
     fn appimage_env_does_not_generate_absent_variables() {
         assert_eq!(
-            sanitize_appimage_env("LD_LIBRARY_PATH", None, Some("/tmp/.mount_agmsg")),
+            sanitize_appimage_env(APPIMAGE_CHILD_ENV_SPECS[0], None, Some("/tmp/.mount_agmsg")),
             None
         );
         assert_eq!(
-            sanitize_appimage_env("PYTHONHOME", None, Some("/tmp/.mount_agmsg")),
+            sanitize_appimage_env(APPIMAGE_CHILD_ENV_SPECS[2], None, Some("/tmp/.mount_agmsg")),
             None
         );
         assert_eq!(
             appimage_env_action_for_context(
                 false,
-                "LD_LIBRARY_PATH",
+                APPIMAGE_CHILD_ENV_SPECS[0],
                 Some("/tmp/.mount_agmsg/usr/lib"),
                 Some("/tmp/.mount_agmsg"),
             ),

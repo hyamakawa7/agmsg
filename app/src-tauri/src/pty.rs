@@ -195,9 +195,19 @@ pub fn pty_spawn(
     // never ran or failed, e.g. on Windows or if the login shell couldn't be
     // queried.
     if let Some(path) = crate::imported_path() {
-        builder.env("PATH", path);
+        match crate::appimage_env_action_with_value(crate::APPIMAGE_PATH_ENV, Some(path)) {
+            crate::AppImageLibraryPathAction::Unchanged => {
+                builder.env("PATH", path);
+            }
+            crate::AppImageLibraryPathAction::Set(path) => {
+                builder.env("PATH", path);
+            }
+            crate::AppImageLibraryPathAction::Remove => {
+                builder.env_remove("PATH");
+            }
+        }
     } else {
-        match crate::appimage_env_action("PATH") {
+        match crate::appimage_env_action(crate::APPIMAGE_PATH_ENV) {
             crate::AppImageLibraryPathAction::Unchanged => {}
             crate::AppImageLibraryPathAction::Set(path) => {
                 builder.env("PATH", path);
@@ -210,14 +220,14 @@ pub fn pty_spawn(
     // Keep AppImage's bundled runtime variables out of host-side child CLIs.
     // The sanitizer operates on this child builder only; the GUI process keeps
     // the variables WebKitGTK needs to run.
-    for variable in crate::APPIMAGE_CHILD_ENV_VARS {
-        match crate::appimage_env_action(variable) {
+    for spec in crate::APPIMAGE_CHILD_ENV_SPECS {
+        match crate::appimage_env_action(spec) {
             crate::AppImageLibraryPathAction::Unchanged => {}
             crate::AppImageLibraryPathAction::Set(value) => {
-                builder.env(variable, value);
+                builder.env(spec.name, value);
             }
             crate::AppImageLibraryPathAction::Remove => {
-                builder.env_remove(variable);
+                builder.env_remove(spec.name);
             }
         }
     }
