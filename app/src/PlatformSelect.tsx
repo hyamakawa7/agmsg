@@ -162,13 +162,30 @@ function LinuxSelect(props: PlatformSelectProps) {
   const [activeIndex, setActiveIndex] = useState(selectedIndex);
   const [open, setOpen] = useState(false);
   const [popupPosition, setPopupPosition] = useState<PlatformSelectPopupPosition | null>(null);
+  const shouldScrollActiveRef = useRef(false);
+
+  const setKeyboardActiveIndex = useCallback((index: number) => {
+    shouldScrollActiveRef.current = true;
+    setActiveIndex(index);
+  }, []);
+
+  const setHoverActiveIndex = useCallback((index: number) => {
+    // Moving the pointer over an option must not scroll under a stationary
+    // pointer; only keyboard navigation owns active-option scroll tracking.
+    shouldScrollActiveRef.current = false;
+    setActiveIndex(index);
+  }, []);
 
   useEffect(() => {
-    if (!open) setActiveIndex(selectedIndex);
+    if (!open) {
+      shouldScrollActiveRef.current = false;
+      setActiveIndex(selectedIndex);
+    }
   }, [open, selectedIndex]);
 
   useLayoutEffect(() => {
-    if (!open || activeIndex < 0) return;
+    if (!open || activeIndex < 0 || !shouldScrollActiveRef.current) return;
+    shouldScrollActiveRef.current = false;
     const popup = popupRef.current;
     const option = document.getElementById(`${listboxId}-option-${activeIndex}`);
     if (!popup || !(option instanceof HTMLElement)) return;
@@ -195,6 +212,7 @@ function LinuxSelect(props: PlatformSelectProps) {
 
   const closeMenu = useCallback(
     (commit: boolean) => {
+      shouldScrollActiveRef.current = false;
       if (commit && activeIndex >= 0) {
         const option = props.options[activeIndex];
         if (option && !option.disabled) props.onChange(option.value);
@@ -210,6 +228,7 @@ function LinuxSelect(props: PlatformSelectProps) {
   const openMenu = useCallback(
     () => {
       if (props.disabled || selectedIndex < 0) return;
+      shouldScrollActiveRef.current = true;
       setActiveIndex(selectedIndex);
       setOpen(true);
       positionPopup();
@@ -247,6 +266,7 @@ function LinuxSelect(props: PlatformSelectProps) {
     (index: number) => {
       const option = props.options[index];
       if (!option || option.disabled) return;
+      shouldScrollActiveRef.current = false;
       setActiveIndex(index);
       props.onChange(option.value);
       setOpen(false);
@@ -266,9 +286,9 @@ function LinuxSelect(props: PlatformSelectProps) {
       const base = activeIndex >= 0 ? activeIndex : selectedIndex;
       const next = nextPlatformSelectIndex(props.options, base, direction);
       if (next < 0) return;
-      setActiveIndex(next);
+      setKeyboardActiveIndex(next);
     },
-    [activeIndex, open, openMenu, props.options, selectedIndex],
+    [activeIndex, open, openMenu, props.options, selectedIndex, setKeyboardActiveIndex],
   );
 
   const moveToBoundary = useCallback(
@@ -281,9 +301,9 @@ function LinuxSelect(props: PlatformSelectProps) {
         ? [...props.options].map((option, index) => ({ option, index })).reverse().find(({ option }) => !option.disabled)?.index ?? -1
         : props.options.findIndex((option) => !option.disabled);
       if (index < 0) return;
-      setActiveIndex(index);
+      setKeyboardActiveIndex(index);
     },
-    [open, openMenu, props.options],
+    [open, openMenu, props.options, setKeyboardActiveIndex],
   );
 
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -383,7 +403,7 @@ function LinuxSelect(props: PlatformSelectProps) {
                   aria-selected={option.value === props.value}
                   aria-disabled={option.disabled || undefined}
                   onMouseDown={(event) => event.preventDefault()}
-                  onMouseEnter={() => !option.disabled && setActiveIndex(index)}
+                  onMouseEnter={() => !option.disabled && setHoverActiveIndex(index)}
                   onClick={() => selectIndex(index)}
                 >
                   {option.label}
