@@ -97,6 +97,8 @@ function LinuxSelect(props: PlatformSelectProps) {
     if (!trigger || typeof window === "undefined") return;
     const rect = trigger.getBoundingClientRect();
     const viewportPadding = 8;
+    // .platform-select-option is 13px × 1.5 line-height plus 12px vertical
+    // padding (about 32px); keep this estimate coupled to its CSS height.
     const estimatedHeight = Math.min(280, Math.max(48, props.options.length * 32 + 8));
     const belowSpace = Math.max(0, window.innerHeight - rect.bottom - viewportPadding);
     const aboveSpace = Math.max(0, rect.top - viewportPadding);
@@ -132,16 +134,14 @@ function LinuxSelect(props: PlatformSelectProps) {
   );
 
   const openMenu = useCallback(
-    (index = selectedIndex) => {
-      if (props.disabled) return;
-      const nextIndex = index >= 0 ? index : firstSelectableIndex(props.options, props.value);
-      if (nextIndex < 0) return;
-      setActiveIndex(nextIndex);
+    () => {
+      if (props.disabled || selectedIndex < 0) return;
+      setActiveIndex(selectedIndex);
       setOpen(true);
       positionPopup();
       if (typeof window !== "undefined") window.requestAnimationFrame(positionPopup);
     },
-    [positionPopup, props.disabled, props.options, props.value, selectedIndex],
+    [positionPopup, props.disabled, selectedIndex],
   );
 
   useEffect(() => {
@@ -152,14 +152,21 @@ function LinuxSelect(props: PlatformSelectProps) {
       if (rootRef.current?.contains(target) || popupRef.current?.contains(target)) return;
       closeMenu(false);
     };
-    const closeOnViewportChange = () => closeMenu(false);
+    const closeOnResize = () => closeMenu(false);
+    const closeOnScroll = (event: Event) => {
+      const target = event.target;
+      // Scrolling the popup's own list is a normal way to reach lower
+      // options; only viewport/ancestor scrolling invalidates fixed coords.
+      if (target instanceof Node && popupRef.current?.contains(target)) return;
+      closeMenu(false);
+    };
     document.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("resize", closeOnViewportChange);
-    window.addEventListener("scroll", closeOnViewportChange, true);
+    window.addEventListener("resize", closeOnResize);
+    window.addEventListener("scroll", closeOnScroll, true);
     return () => {
       document.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("resize", closeOnViewportChange);
-      window.removeEventListener("scroll", closeOnViewportChange, true);
+      window.removeEventListener("resize", closeOnResize);
+      window.removeEventListener("scroll", closeOnScroll, true);
     };
   }, [closeMenu, open]);
 
@@ -177,33 +184,33 @@ function LinuxSelect(props: PlatformSelectProps) {
 
   const move = useCallback(
     (direction: -1 | 1) => {
+      // Opening is not a selection. This keeps Escape a true cancellation
+      // path; Enter/Space, click, or Tab are the only commit paths.
+      if (!open) {
+        openMenu();
+        return;
+      }
       const base = activeIndex >= 0 ? activeIndex : selectedIndex;
       const next = nextPlatformSelectIndex(props.options, base, direction);
       if (next < 0) return;
-      if (!open) {
-        props.onChange(props.options[next].value);
-        openMenu(next);
-      } else {
-        setActiveIndex(next);
-      }
+      setActiveIndex(next);
     },
-    [activeIndex, open, openMenu, props.onChange, props.options, selectedIndex],
+    [activeIndex, open, openMenu, props.options, selectedIndex],
   );
 
   const moveToBoundary = useCallback(
     (toEnd: boolean) => {
+      if (!open) {
+        openMenu();
+        return;
+      }
       const index = toEnd
         ? [...props.options].map((option, index) => ({ option, index })).reverse().find(({ option }) => !option.disabled)?.index ?? -1
         : props.options.findIndex((option) => !option.disabled);
       if (index < 0) return;
-      if (!open) {
-        props.onChange(props.options[index].value);
-        openMenu(index);
-      } else {
-        setActiveIndex(index);
-      }
+      setActiveIndex(index);
     },
-    [open, openMenu, props.onChange, props.options],
+    [open, openMenu, props.options],
   );
 
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -286,7 +293,7 @@ function LinuxSelect(props: PlatformSelectProps) {
             <div
               ref={popupRef}
               id={listboxId}
-              className="platform-select-popup"
+              className="platform-select-popup platform-linux"
               data-placement={popupPosition.placement}
               role="listbox"
               aria-label={props.ariaLabel}
