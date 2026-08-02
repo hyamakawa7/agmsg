@@ -18,7 +18,10 @@ die() {
 }
 
 [[ -d "$BUNDLE_DIR" ]] || die "bundle directory not found: $BUNDLE_DIR"
+BUNDLE_DIR="$(cd -- "$BUNDLE_DIR" && pwd -P)"
 command -v dpkg-deb >/dev/null 2>&1 || die "dpkg-deb is required"
+command -v jq >/dev/null 2>&1 || die "jq is required to read the updater public key"
+command -v minisign >/dev/null 2>&1 || die "minisign is required to verify the AppImage signature"
 
 shopt -s nullglob
 deb_files=("$BUNDLE_DIR"/deb/*.deb)
@@ -35,14 +38,47 @@ appimage="${appimage_files[0]}"
 signature="${signature_files[0]}"
 [[ "$signature" == "$appimage.sig" ]] || die "signature does not match AppImage: $signature"
 [[ -x "$appimage" ]] || die "AppImage is not executable: $appimage"
+[[ -s "$signature" ]] || die "AppImage signature is empty: $signature"
 
 # No unrequested bundle format should be silently emitted by a future CLI.
+# Tauri 2.11.3 may emit a `.deb.sig`; accept it for validation, while the
+# workflow upload list deliberately publishes only the `.deb` and AppImage
+# updater artifacts.
 while IFS= read -r artifact; do
   case "$artifact" in
-    "$BUNDLE_DIR"/deb/*.deb|"$BUNDLE_DIR"/appimage/*.AppImage|"$BUNDLE_DIR"/appimage/*.AppImage.sig) ;;
+    "$BUNDLE_DIR"/deb/*.deb|"$BUNDLE_DIR"/deb/*.deb.sig|"$BUNDLE_DIR"/appimage/*.AppImage|"$BUNDLE_DIR"/appimage/*.AppImage.sig) ;;
     *) die "unexpected bundle artifact: $artifact" ;;
   esac
 done < <(find "$BUNDLE_DIR" -mindepth 2 -maxdepth 2 -type f -print)
+
+verify_appimage_signature() {
+  local config="$APP_DIR/src-tauri/tauri.conf.json"
+  local encoded_key key_text key_comment key_body key_id extra_line
+
+  encoded_key="$(jq -er '.plugins.updater.pubkey // empty' "$config")" \
+    || die "updater public key is missing from $config"
+  [[ -n "$encoded_key" ]] || die "updater public key is empty in $config"
+  key_text="$(printf '%s' "$encoded_key" | base64 --decode 2>/dev/null)" \
+    || die "updater public key is not valid base64"
+
+  key_comment="$(sed -n '1p' <<<"$key_text")"
+  key_body="$(sed -n '2p' <<<"$key_text")"
+  extra_line="$(sed -n '3p' <<<"$key_text")"
+  [[ "$key_comment" == "untrusted comment: minisign public key: "* ]] \
+    || die "updater public key has an invalid minisign comment"
+  [[ "$key_body" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
+    || die "updater public key has an invalid minisign body"
+  [[ -z "$extra_line" ]] || die "updater public key has unexpected extra lines"
+  key_id="${key_comment##*: }"
+  [[ "$key_id" =~ ^[[:xdigit:]]{16}$ ]] \
+    || die "updater public key has an invalid key id: $key_id"
+
+  echo "Verifying AppImage minisign signature with configured key $key_id"
+  minisign -Vm "$appimage" -x "$signature" -P "$key_body" >/dev/null 2>&1 \
+    || die "AppImage minisign verification failed (empty, foreign, or invalid signature)"
+}
+
+verify_appimage_signature
 
 depends="$(dpkg-deb -f "${deb_files[0]}" Depends)"
 echo "Debian Depends: $depends"
@@ -52,8 +88,10 @@ grep -Eq '(^|,|[[:space:]])sqlite3([[:space:](<>=]|,|$)' <<<"$depends" \
 # bundler. Keep this assertion so a toolchain change cannot ship a package
 # that only fails on a clean machine; add explicit deb.depends entries if it
 # ever trips.
-grep -Eiq 'webkit2gtk|libwebkit|libgtk-3' <<<"$depends" \
-  || die "Debian Depends is missing a WebKitGTK/GTK runtime dependency"
+grep -Eiq 'libwebkit2gtk' <<<"$depends" \
+  || die "Debian Depends is missing a libwebkit2gtk runtime dependency"
+grep -Eiq 'libgtk-3' <<<"$depends" \
+  || die "Debian Depends is missing a libgtk-3 runtime dependency"
 
 verify_core_scripts() {
   local root="$1"

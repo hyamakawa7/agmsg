@@ -187,6 +187,23 @@ jobs:
             librsvg2-dev patchelf libssl-dev libsoup-3.0-dev libxdo-dev \
             build-essential curl wget file
 
+      - name: Install minisign verifier
+        run: |
+          set -euo pipefail
+          version=0.12
+          archive="$RUNNER_TEMP/minisign-linux.tar.gz"
+          install_dir="$RUNNER_TEMP/minisign/bin"
+          expected_sha256=9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73
+          curl --fail --location --silent --show-error \
+            "https://github.com/jedisct1/minisign/releases/download/$version/minisign-$version-linux.tar.gz" \
+            --output "$archive"
+          echo "$expected_sha256  $archive" | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP"
+          install -m 0755 "$RUNNER_TEMP/minisign-linux/x86_64/minisign" "$install_dir/minisign"
+          echo "$install_dir" >> "$GITHUB_PATH"
+          "$install_dir/minisign" -v
+
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
