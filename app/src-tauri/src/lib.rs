@@ -100,8 +100,10 @@ fn is_appdir_path(path: &str, appdir: &str) -> bool {
 ///
 /// LD_LIBRARY_PATH, PYTHONPATH, PERLLIB, and PATH are colon-separated lists,
 /// so only APPDIR-rooted entries are removed. PYTHONHOME is a single prefix
-/// value, not a list: if it points into APPDIR, remove the whole variable. The
-/// caller applies the returned action to the child `Command`/`CommandBuilder`;
+/// value, not a list: if it points into APPDIR, remove the whole variable.
+/// APPDIR-rooted entries, empty elements, and empty values are removed; an empty
+/// list element may otherwise be interpreted as a search of the current directory.
+/// The caller applies the returned action to the child `Command`/`CommandBuilder`;
 /// this function never mutates the app process environment.
 pub(crate) fn sanitize_appimage_env(
     spec: AppImageEnvSpec,
