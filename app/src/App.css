@@ -196,6 +196,99 @@ select:focus {
   border-color: var(--accent);
 }
 
+/* Linux's replacement for native option popups. The list itself is rendered
+   into document.body with position:fixed (see PlatformSelect.tsx), so modal
+   and composer overflow/stacking contexts cannot clip it. */
+.platform-select-custom {
+  min-width: 0;
+}
+.platform-select-trigger {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-width: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--panel-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 28px 6px 10px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.platform-select-trigger:hover,
+.platform-select-trigger:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.platform-select-trigger:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.platform-select-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.platform-select-chevron {
+  position: absolute;
+  right: 10px;
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: translateY(-2px) rotate(45deg);
+  pointer-events: none;
+}
+.platform-select-trigger[aria-expanded="true"] .platform-select-chevron {
+  transform: translateY(2px) rotate(225deg);
+}
+.platform-select-popup {
+  position: fixed;
+  z-index: 1000;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 0;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: 13px/1.5 system-ui, Ubuntu, Cantarell, -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.platform-select-option {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.platform-select-option:hover,
+.platform-select-option.active {
+  background: var(--bg);
+}
+.platform-select-option[aria-selected="true"] {
+  color: var(--accent);
+  font-weight: 600;
+}
+.platform-select-option.active[aria-selected="true"] {
+  background: var(--accent);
+  color: #0b0e14;
+}
+.platform-select-option[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}
+.modal .platform-select-custom {
+  width: 100%;
+}
+
 /* + New menu (collapsed-rail only — the expanded sidebar has its own
    direct + buttons per section instead, see .section-add-btn) */
 .new-wrap {
@@ -1522,15 +1615,6 @@ body.resizing-row {
   background-color: var(--panel);
   border-color: var(--border);
 }
-.composer-target-hint {
-  display: none;
-}
-.platform-linux .composer-target-hint {
-  display: inline;
-  color: var(--muted);
-  font-size: 10px;
-  white-space: nowrap;
-}
 .composer button {
   background: var(--accent);
   color: #0b0e14;
@@ -1543,4 +1627,22 @@ body.resizing-row {
 .composer button:disabled {
   opacity: 0.4;
   cursor: default;
+}
+/* .composer button styles apply to every button in the card; restore the
+   dropdown trigger's select-like appearance after that broad rule. */
+.composer .platform-select-trigger {
+  width: auto;
+  max-width: 220px;
+  background: transparent;
+  color: var(--fg);
+  border-color: transparent;
+  border-radius: 6px;
+  padding: 6px 28px 6px 10px;
+  font-weight: 400;
+}
+.composer .platform-select-trigger:hover,
+.composer .platform-select-trigger:focus,
+.composer .platform-select-trigger[aria-expanded="true"] {
+  background: var(--panel);
+  border-color: var(--border);
 }

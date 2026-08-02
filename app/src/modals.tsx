@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { SUPPORTED_LANGUAGES } from "./i18n";
+import { PlatformSelect } from "./PlatformSelect";
 import { AUTO_TIMEZONE, detectTimeZone, isValidTimeZone, listTimeZones } from "./time";
 
 type BrowseDir = (current: string) => Promise<string | null>;
@@ -234,6 +235,8 @@ export function AgentModal(props: {
   defaultProject?: string;
   /** Spawnable agent types, from agmsg's registry. */
   types: string[];
+  /** Linux uses the portal-backed select; other platforms keep native select. */
+  linux: boolean;
 }) {
   const { t } = useTranslation();
   const [type, setType] = useState(props.types[0] ?? "");
@@ -261,13 +264,13 @@ export function AgentModal(props: {
       >
         <label>
           {t("modal.agent.typeLabel")}
-          <select value={type} onChange={(e) => setType(e.target.value)}>
-            {props.types.map((typeName) => (
-              <option key={typeName} value={typeName}>
-                {typeName}
-              </option>
-            ))}
-          </select>
+          <PlatformSelect
+            linux={props.linux}
+            value={type}
+            onChange={setType}
+            ariaLabel={t("modal.agent.typeLabel")}
+            options={props.types.map((typeName) => ({ value: typeName, label: typeName }))}
+          />
         </label>
         <label>
           {t("common.nameLabel")}
@@ -447,6 +450,8 @@ export function SettingsModal(props: {
   onTerminalFontSizeChange: (size: number) => void;
   timezone: string;
   onTimezoneChange: (timezone: string) => void;
+  /** Linux uses the portal-backed select; other platforms keep native select. */
+  linux: boolean;
 }) {
   const { t, i18n } = useTranslation();
   // Local draft text, not a number bound directly to props.terminalFontSize
@@ -500,16 +505,13 @@ export function SettingsModal(props: {
     <Modal title={t("modal.settings.title")} onClose={props.onClose}>
       <label>
         {t("language.label")}
-        <select
-          value={i18n.resolvedLanguage}
-          onChange={(e) => void i18n.changeLanguage(e.target.value)}
-        >
-          {Object.entries(SUPPORTED_LANGUAGES).map(([code, label]) => (
-            <option key={code} value={code}>
-              {label}
-            </option>
-          ))}
-        </select>
+        <PlatformSelect
+          linux={props.linux}
+          value={i18n.resolvedLanguage ?? i18n.language}
+          onChange={(language) => void i18n.changeLanguage(language)}
+          ariaLabel={t("language.label")}
+          options={Object.entries(SUPPORTED_LANGUAGES).map(([code, label]) => ({ value: code, label }))}
+        />
       </label>
       <label>
         {t("settings.terminalFontSize.label")}

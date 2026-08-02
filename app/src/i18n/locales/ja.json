@@ -87,7 +87,6 @@
   "composer": {
     "asLabel": "{{appUser}} として",
     "targetPlaceholder": "宛先…",
-    "targetKeyboardHint": "↑/↓で選択、Enterで決定",
     "messagePlaceholder": "メッセージ",
     "sendButton": "送信",
     "noAppUser": "app-userがいません — 送受信するには追加してください",

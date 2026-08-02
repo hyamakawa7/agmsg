@@ -15,6 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import { TerminalPane } from "./TerminalPane";
+import { PlatformSelect } from "./PlatformSelect";
 import { aggregateTeamStatus, applyStateChange, type PaneStatusMap, type RawState } from "./agentStatus";
 import { AUTO_TIMEZONE, formatMessageTime, isValidTimeZone, resolveTimeZone } from "./time";
 import {
@@ -2528,15 +2529,17 @@ export default function App() {
                       );
                     })()}
                   </span>
-                  <select value={target} onChange={(e) => setTarget(e.target.value)}>
-                    <option value="">{t("composer.targetPlaceholder")}</option>
-                    {others.map((m) => (
-                      <option key={m.name} value={m.name}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="composer-target-hint">{t("composer.targetKeyboardHint")}</span>
+                  <PlatformSelect
+                    linux={platformClass === "platform-linux"}
+                    value={target}
+                    onChange={setTarget}
+                    className="composer-target-select"
+                    ariaLabel={t("composer.targetPlaceholder")}
+                    options={[
+                      { value: "", label: t("composer.targetPlaceholder") },
+                      ...others.map((m) => ({ value: m.name, label: m.name })),
+                    ]}
+                  />
                   <input
                     ref={composerInputRef}
                     value={draft}
@@ -2586,6 +2589,7 @@ export default function App() {
           browseDir={browseDir}
           defaultProject={teamProject}
           types={spawnTypes.map((t) => t.name)}
+          linux={platformClass === "platform-linux"}
         />
       )}
       {modal?.kind === "rename" && (
@@ -2608,6 +2612,7 @@ export default function App() {
           onTerminalFontSizeChange={setTerminalFontSize}
           timezone={timezone}
           onTimezoneChange={setTimezone}
+          linux={platformClass === "platform-linux"}
         />
       )}
       {modal?.kind === "closeWindow" &&

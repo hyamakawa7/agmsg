@@ -87,7 +87,6 @@
   "composer": {
     "asLabel": "以 {{appUser}} 身份",
     "targetPlaceholder": "发送至…",
-    "targetKeyboardHint": "使用 ↑/↓，然后按 Enter",
     "messagePlaceholder": "消息",
     "sendButton": "发送",
     "noAppUser": "无 app-user — 添加一个以收发消息",
