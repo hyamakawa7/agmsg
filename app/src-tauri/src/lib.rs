@@ -98,10 +98,27 @@ pub(crate) fn sanitize_appimage_env(
 pub(crate) const APPIMAGE_CHILD_ENV_VARS: [&str; 4] =
     ["LD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME", "PERLLIB"];
 
+#[cfg(target_os = "linux")]
+fn appimage_child_env_enabled() -> bool {
+    matches!(
+        tauri::utils::platform::bundle_type(),
+        Some(BundleType::AppImage)
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn appimage_child_env_enabled() -> bool {
+    false
+}
+
 /// Read one AppImage launcher variable and turn its sanitized value into a
-/// child-only action. APPDIR is the runtime signal; without it this is an
-/// identity operation for dev, deb, and other non-AppImage launches.
+/// child-only action. The positive Linux/AppImage check is the first gate;
+/// APPDIR is the second runtime signal. Without both, this is an identity
+/// operation for dev, deb, and other non-AppImage launches.
 pub(crate) fn appimage_env_action(variable: &str) -> AppImageLibraryPathAction {
+    if !appimage_child_env_enabled() {
+        return AppImageLibraryPathAction::Unchanged;
+    }
     let appdir = std::env::var("APPDIR").ok();
     let Some(appdir) = appdir.as_deref().filter(|root| !root.is_empty()) else {
         return AppImageLibraryPathAction::Unchanged;
