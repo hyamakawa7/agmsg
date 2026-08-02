@@ -1,11 +1,12 @@
 # agmsg desktop app
 
-The official agmsg desktop app (macOS/Windows, desktop-first): a terminal-embedded
+The official agmsg desktop app (macOS/Windows/Linux, desktop-first): a terminal-embedded
 GUI that spawns agents in real PTYs and delivers agmsg messages to ANY interactive
 CLI agent by injecting them into the agent's stdin at its idle prompt — no per-agent
 bridge, hook, or monitor tool.
 
-> Status: past Phase 0 — daily-driven, macOS-signed and notarized, auto-updating.
+> Status: past Phase 0 — daily-driven, macOS-signed and notarized. macOS and
+> Windows update in place; Linux AppImage builds use the same updater policy.
 
 ## Install
 
@@ -23,8 +24,14 @@ normally with no Gatekeeper right-click workaround needed.
 **Windows**
 Download the `.msi` or `.exe` installer from the same [Releases page](https://github.com/fujibee/agmsg/releases).
 
-Both platforms auto-update in place after install (**agmsg → Check for
-Updates…**, or silently on launch).
+**Linux (Ubuntu)**
+Download the `.deb` or `.AppImage` from the same [Releases page](https://github.com/fujibee/agmsg/releases).
+The AppImage can update in place; a `.deb` is updated by downloading the newer
+package from the release page (it does not self-update).
+
+macOS, Windows, and Linux AppImage builds can check for updates after install
+(**agmsg → Check for Updates…**, or silently on launch). The Linux `.deb` path
+is deliberately excluded from the updater; see the product policy below.
 
 Prerequisite either way: agmsg itself installed at `~/.agents/skills/agmsg` (the
 app reads its DB and team config from there) — see the
@@ -84,14 +91,17 @@ DB and team config from there). `claude` must be on `PATH` to spawn Claude Code 
 
 ## Releasing
 
-`.github/workflows/app-release.yml` builds, signs, and (macOS) notarizes both
-platforms on a push of an `app-vX.Y.Z` tag (or by hand via `workflow_dispatch`).
+`.github/workflows/app-release.yml` builds, signs, and (macOS) notarizes all
+supported desktop platforms on a push of an `app-vX.Y.Z` tag (or by hand via
+`workflow_dispatch`).
 macOS goes through codesign → notarize → staple end to end in CI. Windows builds
 and, given Azure credentials, runs Trusted Signing (OIDC via `azure/login`, no
 client secret) — that federated identity trusts `main` only, so it can't be
 exercised from a feature branch. The workflow deliberately doesn't publish a
 GitHub Release itself; cutting one is still a human-gated step (upload artifacts
-+ hand-author `latest.json`, below).
++ hand-author `latest.json`, below). The Linux job requests exactly a `.deb`, an
+`.AppImage`, and its `.AppImage.sig`; run `app/scripts/verify-linux-bundles.sh`
+against the downloaded bundle directory before uploading it.
 
 For a local macOS build without CI:
 ```sh
@@ -103,7 +113,11 @@ pnpm build:notarize   # sources APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID from
 ```
 
 Auto-update is wired up via `tauri-plugin-updater`, checked silently on launch and
-on-demand via **agmsg → Check for Updates…**. The private signing key lives in
+on-demand via **agmsg → Check for Updates…**. On Linux this is a product policy,
+not a technical limitation: only AppImage bundles self-update. A `.deb` could be
+replaced with an elevated package-manager operation, but this project does not
+adopt a self-replacement flow that prompts for privilege escalation; install a
+new `.deb` from the release page instead. The private signing key lives in
 the worktree-root `.secrets/` locally (never committed) and as the
 `TAURI_SIGNING_PRIVATE_KEY`/`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets in CI.
 `TAURI_SIGNING_PRIVATE_KEY` must be the **decoded** minisign key text itself
@@ -132,12 +146,14 @@ gh release create app-latest --repo fujibee/agmsg --title "agmsg (latest)" \
 
 # Cut a normal versioned release for history/changelog, from CI's artifacts...
 gh release create app-vX.Y.Z --repo fujibee/agmsg --title "agmsg vX.Y.Z" \
-  <downloaded macOS .app.tar.gz, .sig, .dmg, Windows .msi, .exe>
+  <downloaded macOS .app.tar.gz, .sig, .dmg, Windows .msi, .exe, Linux .deb, .AppImage, .AppImage.sig>
 
 # ...then overwrite app-latest's assets with the same build + latest.json
 # (hand-author latest.json: version, notes, pub_date, per-platform url+signature).
+# Linux must use the AppImage itself and the matching v2 .AppImage.sig:
+# "linux-x86_64": { "url": ".../<file>.AppImage", "signature": "<.AppImage.sig contents>" }
 gh release upload app-latest --repo fujibee/agmsg --clobber \
-  <same artifacts> latest.json
+  <same artifacts, including the Linux .deb, .AppImage, and .AppImage.sig> latest.json
 ```
 Once artifacts are up, update the Homebrew cask (`fujibee/homebrew-agmsg`):
 ```sh
@@ -147,6 +163,21 @@ scripts/release/update-cask.sh X.Y.Z   # finds the .dmg on the release,
 ```
 Run it only after the release assets are uploaded — the cask's `url` must
 resolve as soon as the tap commit lands.
+
+## Known limitations
+
+- On Linux, a native select popup opened near the bottom edge of the screen can
+  clip lower options (especially when the window is maximized). Use the arrow
+  keys to reach and select those options. The custom Linux controls cover the
+  app's three select paths; this limitation remains relevant to native-popup
+  fallback paths. X11 was tested; Wayland and HiDPI were not tested.
+- Do not use the mouse wheel while an open select popup is under the pointer: the
+  item under the cursor can be selected and the popup closes, which may change
+  the destination unintentionally. (Wheel changes on a closed selector were not
+  observed in the Phase 2 checks.)
+- If terminal output has no colour, check the shell that launched agmsg for
+  `NO_COLOR`. Remove that variable when colour is wanted; the app respects the
+  user's `NO_COLOR` setting and does not override it.
 
 ## Known gaps
 

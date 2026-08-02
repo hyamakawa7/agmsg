@@ -42,6 +42,60 @@ which:
 4. Generates the release notes for the tag with git-cliff and creates a
    GitHub Release from them.
 
+## Desktop app: Linux artifacts and updater metadata
+
+The desktop app has a separate `app-vX.Y.Z` release flow in
+`.github/workflows/app-release.yml`. Its Linux job runs on the pinned
+`ubuntu-22.04` image (glibc compatibility for distributed binaries) and asks
+Tauri for exactly `deb,appimage` bundles. Before uploading artifacts, run:
+
+```bash
+cd app
+scripts/verify-linux-bundles.sh src-tauri/target/release/bundle
+```
+
+The check must find one `.deb`, one executable `.AppImage`, and the matching
+`.AppImage.sig`, and no RPM. It also checks the Debian runtime dependencies and
+the executable bits of the bundled `agmsg-core` scripts in both formats.
+
+Linux updater behavior is a product policy: only an AppImage self-updates. A
+Debian package could technically be replaced through `pkexec`, a GUI sudo
+prompt, or `dpkg -i`, but this project does not adopt a self-replacement flow
+that escalates privileges. Tell `.deb` users to download and install the newer
+package from the release page instead. macOS and Windows updater behavior is
+unchanged.
+
+The `linux-x86_64` entry in the hand-authored `latest.json` must pair the
+AppImage URL with the exact contents of its v2 signature file (not a URL to the
+signature file):
+
+```json
+{
+  "version": "0.4.0",
+  "notes": "...",
+  "pub_date": "2026-08-02T00:00:00Z",
+  "platforms": {
+    "linux-x86_64": {
+      "url": "https://github.com/fujibee/agmsg/releases/download/app-latest/agmsg_0.4.0_amd64.AppImage",
+      "signature": "<contents of agmsg_0.4.0_amd64.AppImage.sig>"
+    }
+  }
+}
+```
+
+When updating the fixed `app-latest` release, upload the Linux `.deb`, the
+AppImage, its `.AppImage.sig`, and this `latest.json` together. Keep the
+`linux-x86_64` URL and signature from the same build; a signature copied from a
+different AppImage makes the updater reject the artifact.
+
+The explicit `sqlite3` entry in `app/src-tauri/tauri.conf.json` is intentional.
+The app's Rust `rusqlite` dependency uses the bundled SQLite library, while the
+`agmsg-core` resource invokes the system `sqlite3` command from its install
+script (`app/src-tauri/resources/agmsg-core/install.sh`, the missing-command
+check around lines 209–212). Do not remove that Debian dependency unless the
+resource's runtime requirement and the package's `Depends` field are both
+revalidated.
+
 ### Manual steps (if you'd rather not use the script)
 
 ```bash
