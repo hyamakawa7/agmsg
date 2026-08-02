@@ -150,6 +150,71 @@ jobs:
             app/src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: warn
 
+  build-linux:
+    name: build (linux)
+    needs: verify-version
+    # Pin the release build to Ubuntu 22.04 so the shipped binaries retain
+    # glibc compatibility with supported Ubuntu installations. Revisit this
+    # when the supported Ubuntu baseline is raised or GitHub retires the label.
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf libssl-dev libsoup-3.0-dev libxdo-dev \
+            build-essential curl wget file
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Bundle pinned agmsg-core
+        run: app/scripts/bundle-core.sh
+        working-directory: .
+        shell: bash
+
+      - name: Build deb and AppImage
+        env:
+          # Linux updater artifacts use the minisign private key only. Apple
+          # and Microsoft signing credentials are platform-specific and must
+          # not be introduced into this job.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: pnpm tauri build --bundles deb,appimage
+
+      - name: Verify Linux bundles
+        run: scripts/verify-linux-bundles.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agmsg-app-linux
+          path: |
+            app/src-tauri/target/release/bundle/deb/*.deb
+            app/src-tauri/target/release/bundle/appimage/*.AppImage
+            app/src-tauri/target/release/bundle/appimage/*.AppImage.sig
+          if-no-files-found: error
+
   build-windows:
     name: build (windows)
     needs: verify-version

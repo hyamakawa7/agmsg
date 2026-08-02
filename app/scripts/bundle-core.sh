@@ -9,8 +9,11 @@
 # what ships is fixed and auditable via git history. Bump AGMSG_CORE_REF by
 # hand to pick up newer agmsg-core fixes.
 #
-# Called from three places that must stay in sync: app-release.yml's macOS
-# and Windows jobs, and build-notarize.sh for local builds.
+# Called from every build path that must bundle the pinned core:
+#   - .github/workflows/app-release.yml: build-macos, build-windows, build-linux
+#   - .github/workflows/tests.yml: app-check, app-check-linux, app-test-windows
+#   - app/scripts/build-notarize.sh: local macOS notarized builds
+# Keep this list exhaustive when adding another build or test path.
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

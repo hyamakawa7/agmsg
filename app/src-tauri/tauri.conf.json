@@ -33,6 +33,7 @@
     "resources": {
       "resources/agmsg-core": "agmsg-core"
     },
+    "category": "Utility",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,6 +43,11 @@
     ],
     "macOS": {
       "signingIdentity": "Developer ID Application: Koichi Fujikawa (A6GJF6MMFV)"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["sqlite3"]
+      }
     }
   },
   "plugins": {
