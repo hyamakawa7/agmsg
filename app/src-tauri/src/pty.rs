@@ -196,18 +196,29 @@ pub fn pty_spawn(
     // queried.
     if let Some(path) = crate::imported_path() {
         builder.env("PATH", path);
-    }
-    // AppImage's launcher prepends its bundled libraries to this process's
-    // environment. Agent CLIs must resolve against the host libraries instead
-    // (notably sqlite3), so restore or sanitize that path for Linux children.
-    #[cfg(target_os = "linux")]
-    match crate::appimage_library_path_action_from_environment() {
-        crate::AppImageLibraryPathAction::Unchanged => {}
-        crate::AppImageLibraryPathAction::Set(path) => {
-            builder.env("LD_LIBRARY_PATH", path);
+    } else {
+        match crate::appimage_env_action("PATH") {
+            crate::AppImageLibraryPathAction::Unchanged => {}
+            crate::AppImageLibraryPathAction::Set(path) => {
+                builder.env("PATH", path);
+            }
+            crate::AppImageLibraryPathAction::Remove => {
+                builder.env_remove("PATH");
+            }
         }
-        crate::AppImageLibraryPathAction::Remove => {
-            builder.env_remove("LD_LIBRARY_PATH");
+    }
+    // Keep AppImage's bundled runtime variables out of host-side child CLIs.
+    // The sanitizer operates on this child builder only; the GUI process keeps
+    // the variables WebKitGTK needs to run.
+    for variable in crate::APPIMAGE_CHILD_ENV_VARS {
+        match crate::appimage_env_action(variable) {
+            crate::AppImageLibraryPathAction::Unchanged => {}
+            crate::AppImageLibraryPathAction::Set(value) => {
+                builder.env(variable, value);
+            }
+            crate::AppImageLibraryPathAction::Remove => {
+                builder.env_remove(variable);
+            }
         }
     }
 

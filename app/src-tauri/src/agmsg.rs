@@ -194,18 +194,29 @@ fn bash_command() -> Result<std::process::Command, String> {
     // No-op on Windows / if the import never ran or failed.
     if let Some(path) = crate::imported_path() {
         cmd.env("PATH", path);
-    }
-    // Match pty_spawn: AppImage's bundled sqlite3 must not leak into agmsg
-    // core's host-side scripts/CLI. Non-Linux and non-AppImage environments
-    // produce Unchanged and retain their inherited library path.
-    #[cfg(target_os = "linux")]
-    match crate::appimage_library_path_action_from_environment() {
-        crate::AppImageLibraryPathAction::Unchanged => {}
-        crate::AppImageLibraryPathAction::Set(path) => {
-            cmd.env("LD_LIBRARY_PATH", path);
+    } else {
+        match crate::appimage_env_action("PATH") {
+            crate::AppImageLibraryPathAction::Unchanged => {}
+            crate::AppImageLibraryPathAction::Set(path) => {
+                cmd.env("PATH", path);
+            }
+            crate::AppImageLibraryPathAction::Remove => {
+                cmd.env_remove("PATH");
+            }
         }
-        crate::AppImageLibraryPathAction::Remove => {
-            cmd.env_remove("LD_LIBRARY_PATH");
+    }
+    // AppImage's bundled runtime variables must not leak into host-side
+    // scripts/CLI children. This only changes the child Command; the GUI
+    // process keeps its own AppImage environment intact.
+    for variable in crate::APPIMAGE_CHILD_ENV_VARS {
+        match crate::appimage_env_action(variable) {
+            crate::AppImageLibraryPathAction::Unchanged => {}
+            crate::AppImageLibraryPathAction::Set(value) => {
+                cmd.env(variable, value);
+            }
+            crate::AppImageLibraryPathAction::Remove => {
+                cmd.env_remove(variable);
+            }
         }
     }
     Ok(cmd)
