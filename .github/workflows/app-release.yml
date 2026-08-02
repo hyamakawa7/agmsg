@@ -215,6 +215,9 @@ jobs:
         working-directory: .
         shell: bash
 
+      - name: Verify agmsg-core resource modes
+        run: scripts/test-verify-core-tree-modes.sh
+
       - name: Build deb and AppImage
         env:
           # Linux updater artifacts use the minisign key pair. Apple and

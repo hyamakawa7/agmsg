@@ -26,6 +26,7 @@ command -v minisign >/dev/null 2>&1 || die "minisign is required to verify the A
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 source "$APP_DIR/scripts/verify-minisign-appimage.sh"
+source "$APP_DIR/scripts/verify-core-tree-modes.sh"
 source_core="$APP_DIR/src-tauri/resources/agmsg-core"
 [[ -d "$source_core" ]] \
   || die "source agmsg-core is missing; run scripts/bundle-core.sh before verify-linux-bundles.sh: $source_core"
@@ -119,49 +120,12 @@ grep -Eiq 'libwebkit2gtk' <<<"$depends" \
 grep -Eiq 'libgtk-3' <<<"$depends" \
   || die "Debian Depends is missing a libgtk-3 runtime dependency"
 
-verify_core_tree_modes() {
-  local root="$1"
-  local label="$2"
-  local core
-  local source_manifest="$tmp_dir/${label}-source-core.manifest"
-  local bundle_manifest="$tmp_dir/${label}-bundle-core.manifest"
-  local relative_path file_type mode expected actual
-  declare -A bundle_entries=()
-
-  core="$(find "$root" -type d -name agmsg-core -print -quit)"
-  [[ -n "$core" ]] || die "$label: agmsg-core resource directory is missing"
-
-  # Git records which files are executable. This comparison checks whether
-  # packaging preserved those source modes; it does not make every .sh
-  # executable, because helpers beginning with `_` are intentionally sourced.
-  # Every source entry must survive with the same type and mode. Tauri may add
-  # other entries, so the reverse set difference is intentionally tolerated.
-  find "$source_core" -mindepth 1 -printf '%P\t%y\t%m\n' \
-    | LC_ALL=C sort >"$source_manifest"
-  find "$core" -mindepth 1 -printf '%P\t%y\t%m\n' \
-    | LC_ALL=C sort >"$bundle_manifest"
-
-  while IFS=$'\t' read -r relative_path file_type mode; do
-    [[ -n "$relative_path" ]] || continue
-    bundle_entries["$relative_path"]="$file_type:$mode"
-  done <"$bundle_manifest"
-
-  while IFS=$'\t' read -r relative_path file_type mode; do
-    [[ -n "$relative_path" ]] || continue
-    if [[ -z ${bundle_entries["$relative_path"]+present} ]]; then
-      die "$label: agmsg-core path missing after packaging: $relative_path"
-    fi
-    expected="$file_type:$mode"
-    actual="${bundle_entries["$relative_path"]}"
-    [[ "$actual" == "$expected" ]] \
-      || die "$label: agmsg-core type/mode changed at $relative_path (source $expected, bundle $actual)"
-  done <"$source_manifest"
-}
-
 deb_root="$tmp_dir/deb"
 mkdir -p "$deb_root"
 dpkg-deb -x "${deb_files[0]}" "$deb_root"
-verify_core_tree_modes "$deb_root" "deb"
+if ! verify_core_tree_modes "$source_core" "$deb_root" "deb" "$tmp_dir/core-modes"; then
+  die "deb: agmsg-core files or execution bits were not preserved"
+fi
 
 appimage_root="$tmp_dir/appimage"
 mkdir -p "$appimage_root"
@@ -172,7 +136,9 @@ if ! (cd "$appimage_root" && "$appimage" --appimage-extract >/dev/null); then
 fi
 [[ -d "$appimage_root/squashfs-root" ]] \
   || die "AppImage squashfs extraction did not produce squashfs-root"
-verify_core_tree_modes "$appimage_root/squashfs-root" "AppImage"
+if ! verify_core_tree_modes "$source_core" "$appimage_root/squashfs-root" "AppImage" "$tmp_dir/core-modes"; then
+  die "AppImage: agmsg-core files or execution bits were not preserved"
+fi
 
 echo "verify-linux-bundles: OK"
 echo "  deb:       ${deb_files[0]}"
