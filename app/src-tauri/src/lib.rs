@@ -177,9 +177,11 @@ pub(crate) fn for_each_appimage_env_action(
     apply: impl FnMut(AppImageEnvSpec, AppImageEnvAction),
 ) {
     let appdir = std::env::var("APPDIR").ok();
+    let inherited_path = std::env::var("PATH").ok();
     for_each_appimage_env_action_for_context(
         valid_appdir(appdir.as_deref()).is_some(),
         appdir.as_deref(),
+        inherited_path.as_deref(),
         imported_path,
         apply,
     );
@@ -188,11 +190,13 @@ pub(crate) fn for_each_appimage_env_action(
 #[cfg(target_os = "linux")]
 /// Build child environment actions from an explicit Linux/AppImage context.
 /// A supplied `imported_path` remains an explicit PATH override even when
-/// sanitization leaves its value unchanged; only an absent override keeps the
-/// inherited PATH's `Unchanged` semantics.
+/// sanitization leaves its value unchanged. When it is absent, the separate
+/// `inherited_path` value is sanitized and keeps `Unchanged` semantics only
+/// when no filtering is needed (or PATH itself is absent).
 pub(crate) fn for_each_appimage_env_action_for_context(
     enabled: bool,
     appdir: Option<&str>,
+    inherited_path: Option<&str>,
     imported_path: Option<&str>,
     mut apply: impl FnMut(AppImageEnvSpec, AppImageEnvAction),
 ) {
@@ -203,7 +207,7 @@ pub(crate) fn for_each_appimage_env_action_for_context(
             action => action,
         }
     } else {
-        appimage_env_action_for_context(enabled, APPIMAGE_PATH_ENV, None, appdir)
+        appimage_env_action_for_context(enabled, APPIMAGE_PATH_ENV, inherited_path, appdir)
     };
     apply(APPIMAGE_PATH_ENV, path_action);
     for spec in APPIMAGE_CHILD_ENV_SPECS {
@@ -1242,6 +1246,7 @@ mod tests {
         for_each_appimage_env_action_for_context(
             false,
             None,
+            None,
             Some("/usr/local/bin:/usr/bin"),
             |spec, action| {
                 if spec == APPIMAGE_PATH_ENV {
@@ -1262,6 +1267,7 @@ mod tests {
         for_each_appimage_env_action_for_context(
             true,
             Some("/tmp/.mount_agmsg"),
+            None,
             Some("/usr/local/bin:/usr/bin"),
             |spec, action| {
                 if spec == APPIMAGE_PATH_ENV {
@@ -1282,6 +1288,7 @@ mod tests {
         for_each_appimage_env_action_for_context(
             true,
             Some("/tmp/.mount_agmsg"),
+            None,
             Some("/tmp/.mount_agmsg/usr/bin:/usr/bin"),
             |spec, action| {
                 if spec == APPIMAGE_PATH_ENV {
@@ -1293,6 +1300,60 @@ mod tests {
             path_action,
             Some(AppImageEnvAction::Set("/usr/bin".into()))
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn inherited_path_is_sanitized_when_imported_path_is_absent() {
+        let mut path_action = None;
+        for_each_appimage_env_action_for_context(
+            true,
+            Some("/tmp/.mount_agmsg"),
+            Some("/tmp/.mount_agmsg/usr/bin:/usr/bin"),
+            None,
+            |spec, action| {
+                if spec == APPIMAGE_PATH_ENV {
+                    path_action = Some(action);
+                }
+            },
+        );
+        assert_eq!(path_action, Some(AppImageEnvAction::Set("/usr/bin".into())));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn inherited_host_path_stays_unchanged_when_imported_path_is_absent() {
+        let mut path_action = None;
+        for_each_appimage_env_action_for_context(
+            true,
+            Some("/tmp/.mount_agmsg"),
+            Some("/usr/local/bin:/usr/bin"),
+            None,
+            |spec, action| {
+                if spec == APPIMAGE_PATH_ENV {
+                    path_action = Some(action);
+                }
+            },
+        );
+        assert_eq!(path_action, Some(AppImageEnvAction::Unchanged));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn absent_inherited_path_stays_unchanged_when_imported_path_is_absent() {
+        let mut path_action = None;
+        for_each_appimage_env_action_for_context(
+            true,
+            Some("/tmp/.mount_agmsg"),
+            None,
+            None,
+            |spec, action| {
+                if spec == APPIMAGE_PATH_ENV {
+                    path_action = Some(action);
+                }
+            },
+        );
+        assert_eq!(path_action, Some(AppImageEnvAction::Unchanged));
     }
 
     #[test]
