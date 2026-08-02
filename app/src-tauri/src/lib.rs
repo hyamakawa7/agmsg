@@ -115,16 +115,19 @@ fn appimage_child_env_enabled() -> bool {
 /// child-only action. The positive Linux/AppImage check is the first gate;
 /// APPDIR is the second runtime signal. Without both, this is an identity
 /// operation for dev, deb, and other non-AppImage launches.
-pub(crate) fn appimage_env_action(variable: &str) -> AppImageLibraryPathAction {
-    if !appimage_child_env_enabled() {
+pub(crate) fn appimage_env_action_for_context(
+    is_linux_appimage: bool,
+    variable: &str,
+    value: Option<&str>,
+    appdir: Option<&str>,
+) -> AppImageLibraryPathAction {
+    if !is_linux_appimage {
         return AppImageLibraryPathAction::Unchanged;
     }
-    let appdir = std::env::var("APPDIR").ok();
     let Some(appdir) = appdir.as_deref().filter(|root| !root.is_empty()) else {
         return AppImageLibraryPathAction::Unchanged;
     };
-    let value = std::env::var(variable).ok();
-    let Some(value) = value.as_deref() else {
+    let Some(value) = value else {
         return AppImageLibraryPathAction::Unchanged;
     };
     match sanitize_appimage_env(variable, Some(value), Some(appdir)) {
@@ -132,6 +135,17 @@ pub(crate) fn appimage_env_action(variable: &str) -> AppImageLibraryPathAction {
         Some(sanitized) => AppImageLibraryPathAction::Set(sanitized),
         None => AppImageLibraryPathAction::Remove,
     }
+}
+
+pub(crate) fn appimage_env_action(variable: &str) -> AppImageLibraryPathAction {
+    let appdir = std::env::var("APPDIR").ok();
+    let value = std::env::var(variable).ok();
+    appimage_env_action_for_context(
+        appimage_child_env_enabled(),
+        variable,
+        value.as_deref(),
+        appdir.as_deref(),
+    )
 }
 
 /// The native menu's current language (BCP-47 code, e.g. "ja", "zh-CN") —
@@ -980,8 +994,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        passwd_shell_for_user, path_import_log_path, resolve_login_shell_with_probes,
-        sanitize_appimage_env, select_login_shell, updater_allowed,
+        appimage_env_action_for_context, passwd_shell_for_user, path_import_log_path,
+        resolve_login_shell_with_probes, sanitize_appimage_env, select_login_shell, updater_allowed,
+        AppImageLibraryPathAction,
     };
     use tauri::utils::config::BundleType;
     use std::cell::Cell;
@@ -1194,6 +1209,16 @@ mod tests {
         assert_eq!(
             sanitize_appimage_env("PYTHONHOME", None, Some("/tmp/.mount_agmsg")),
             None
+        );
+        assert_eq!(
+            appimage_env_action_for_context(
+                false,
+                "LD_LIBRARY_PATH",
+                Some("/tmp/.mount_agmsg/usr/lib"),
+                Some("/tmp/.mount_agmsg"),
+            ),
+            AppImageLibraryPathAction::Unchanged,
+            "non-Linux must ignore APPDIR even when it is present"
         );
     }
 }
