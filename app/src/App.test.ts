@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_TERMINAL_FONT_FAMILY,
   hasUnsafeDropPath,
   joinDroppedPaths,
-  LINUX_TERMINAL_FONT_FAMILY,
-  platformClassForUserAgent,
   resolveFileDropTarget,
   shellPaneFrom,
   shellSplitStillValid,
@@ -13,6 +10,11 @@ import {
   shouldSuppressClickAfterDrag,
   type LoginShellInfo,
 } from "./App";
+import {
+  DEFAULT_TERMINAL_FONT_FAMILY,
+  LINUX_TERMINAL_FONT_FAMILY,
+  platformClassForUserAgent,
+} from "./platform";
 
 describe("platformClassForUserAgent", () => {
   it("marks macOS webviews for the overlay title-bar layout", () => {

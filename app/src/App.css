@@ -36,7 +36,7 @@ body,
 
 /* Linux gets an explicit Ubuntu-compatible UI stack. Keep the base stack
    above unchanged so macOS and Windows retain their existing font choice. */
-.platform-linux {
+.app.platform-linux {
   font-family: system-ui, Ubuntu, Cantarell, -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif;
 }
 
@@ -1112,8 +1112,8 @@ body.resizing-row {
   font-family: Menlo, Monaco, "Courier New", monospace;
   font-size: 12px;
 }
-.platform-linux .room {
-  /* Keep this list in sync with LINUX_TERMINAL_FONT_FAMILY in App.tsx. */
+.app.platform-linux .room {
+  /* Keep this list in sync with LINUX_TERMINAL_FONT_FAMILY in platform.ts. */
   font-family: "Ubuntu Mono", "DejaVu Sans Mono", Menlo, Monaco, "Courier New", monospace;
 }
 /* Shared name coloring for both layouts. */

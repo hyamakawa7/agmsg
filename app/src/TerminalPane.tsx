@@ -10,7 +10,7 @@ import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   LINUX_TERMINAL_FONT_FAMILY,
   platformClassForUserAgent,
-} from "./App";
+} from "./platform";
 import { createWriteBatcher } from "./writeBatcher";
 import { attachWebglAddon } from "./webglAttach";
 
