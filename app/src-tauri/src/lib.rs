@@ -72,6 +72,15 @@ pub(crate) const APPIMAGE_CHILD_ENV_SPECS: [AppImageEnvSpec; 4] = [
     },
 ];
 
+fn valid_appdir(appdir: Option<&str>) -> Option<&str> {
+    let appdir = appdir?;
+    let trimmed = appdir.trim_end_matches('/');
+    if trimmed.is_empty() || trimmed == "/" || !trimmed.starts_with('/') {
+        return None;
+    }
+    Some(appdir)
+}
+
 fn is_appdir_path(path: &str, appdir: &str) -> bool {
     let root = appdir.trim_end_matches('/');
     if root.is_empty() {
@@ -99,7 +108,7 @@ pub(crate) fn sanitize_appimage_env(
     let Some(value) = value else {
         return None;
     };
-    let Some(appdir) = appdir.filter(|root| !root.is_empty()) else {
+    let Some(appdir) = valid_appdir(appdir) else {
         return Some(value.to_owned());
     };
     if value.is_empty() {
@@ -133,9 +142,8 @@ pub(crate) fn sanitize_appimage_env(
 
 #[cfg(target_os = "linux")]
 fn appimage_child_env_enabled() -> bool {
-    std::env::var("APPDIR")
-        .map(|value| !value.is_empty())
-        .unwrap_or(false)
+    let appdir = std::env::var("APPDIR").ok();
+    valid_appdir(appdir.as_deref()).is_some()
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -144,10 +152,11 @@ fn appimage_child_env_enabled() -> bool {
 }
 
 /// Read one AppImage launcher variable and turn its sanitized value into a
-/// child-only action. The Linux cfg and non-empty APPDIR check are the gates;
-/// without both, this is an identity operation for dev, deb, and other
-/// non-AppImage launches. APPDIR is used directly because an extracted
-/// AppImage can have APPDIR while its binary bundle marker remains unknown.
+/// child-only action. The Linux cfg and valid absolute non-root APPDIR check
+/// are the gates; without both, this is an identity operation for dev, deb,
+/// and other non-AppImage launches. APPDIR is used directly because an
+/// extracted AppImage can have APPDIR while its binary bundle marker remains
+/// unknown.
 pub(crate) fn appimage_env_action_for_context(
     enabled: bool,
     spec: AppImageEnvSpec,
@@ -157,7 +166,7 @@ pub(crate) fn appimage_env_action_for_context(
     if !enabled {
         return AppImageLibraryPathAction::Unchanged;
     }
-    let Some(appdir) = appdir.as_deref().filter(|root| !root.is_empty()) else {
+    let Some(appdir) = valid_appdir(appdir) else {
         return AppImageLibraryPathAction::Unchanged;
     };
     let Some(value) = value else {
@@ -1186,6 +1195,17 @@ mod tests {
             sanitize_appimage_env(APPIMAGE_CHILD_ENV_SPECS[0], Some(""), None),
             Some("".into())
         );
+        for appdir in [Some(""), Some("relative/app"), Some("/")] {
+            assert_eq!(
+                sanitize_appimage_env(
+                    APPIMAGE_CHILD_ENV_SPECS[0],
+                    Some("/tmp/.mount_agmsg/usr/lib:/usr/lib"),
+                    appdir,
+                ),
+                Some("/tmp/.mount_agmsg/usr/lib:/usr/lib".into()),
+                "invalid APPDIR must leave the value unchanged: {appdir:?}"
+            );
+        }
     }
 
     #[test]
@@ -1237,6 +1257,16 @@ mod tests {
                 Some("/tmp/.mount_agmsg"),
             ),
             Some("/tmp/.mount_agmsg2/usr/lib".into())
+        );
+        assert_eq!(
+            appimage_env_action_for_context(
+                true,
+                APPIMAGE_CHILD_ENV_SPECS[0],
+                Some("/tmp/.mount_agmsg/usr/lib:/usr/lib"),
+                Some("/tmp/.mount_agmsg"),
+            ),
+            AppImageLibraryPathAction::Set("/usr/lib".into()),
+            "valid APPDIR must sanitize without an APPIMAGE/bundle signal"
         );
     }
 
