@@ -133,10 +133,9 @@ pub(crate) fn sanitize_appimage_env(
 
 #[cfg(target_os = "linux")]
 fn appimage_child_env_enabled() -> bool {
-    matches!(
-        tauri::utils::platform::bundle_type(),
-        Some(BundleType::AppImage)
-    )
+    std::env::var("APPDIR")
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -145,16 +144,17 @@ fn appimage_child_env_enabled() -> bool {
 }
 
 /// Read one AppImage launcher variable and turn its sanitized value into a
-/// child-only action. The positive Linux/AppImage check is the first gate;
-/// APPDIR is the second runtime signal. Without both, this is an identity
-/// operation for dev, deb, and other non-AppImage launches.
+/// child-only action. The Linux cfg and non-empty APPDIR check are the gates;
+/// without both, this is an identity operation for dev, deb, and other
+/// non-AppImage launches. APPDIR is used directly because an extracted
+/// AppImage can have APPDIR while its binary bundle marker remains unknown.
 pub(crate) fn appimage_env_action_for_context(
-    is_linux_appimage: bool,
+    enabled: bool,
     spec: AppImageEnvSpec,
     value: Option<&str>,
     appdir: Option<&str>,
 ) -> AppImageLibraryPathAction {
-    if !is_linux_appimage {
+    if !enabled {
         return AppImageLibraryPathAction::Unchanged;
     }
     let Some(appdir) = appdir.as_deref().filter(|root| !root.is_empty()) else {
