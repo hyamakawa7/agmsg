@@ -54,7 +54,7 @@ done < <(find "$BUNDLE_DIR" -mindepth 2 -maxdepth 2 -type f -print)
 verify_appimage_signature() {
   local config="$APP_DIR/src-tauri/tauri.conf.json"
   local encoded_key key_text key_comment key_body extra_line
-  local key_hex key_id_raw key_id_derived comment_id comment_id_normalized i
+  local key_hex key_id_raw
 
   encoded_key="$(jq -er '.plugins.updater.pubkey // empty' "$config")" \
     || die "updater public key is missing from $config"
@@ -79,30 +79,18 @@ verify_appimage_signature() {
   [[ "${key_hex:0:4}" == "4564" ]] \
     || die "updater public key body has an invalid Ed25519 marker"
   key_id_raw="${key_hex:4:16}"
-  key_id_derived=""
-  for ((i=${#key_id_raw}-2; i>=0; i-=2)); do
-    key_id_derived+="${key_id_raw:i:2}"
-  done
-  key_id_derived="${key_id_derived^^}"
+  [[ "$key_id_raw" =~ ^[[:xdigit:]]{16}$ ]] \
+    || die "updater public key body is missing its 8-byte key id"
 
   echo "Minisign public-key comment: ${key_comment:-<empty>}"
-  if [[ "$key_comment" == *"minisign public key: "* ]]; then
-    comment_id="${key_comment##*minisign public key: }"
-    if [[ "$comment_id" =~ ^[[:xdigit:]]{1,16}$ ]]; then
-      comment_id_normalized="$(printf '%016s' "$comment_id" | tr ' ' '0')"
-      comment_id_normalized="${comment_id_normalized^^}"
-      if [[ "$comment_id_normalized" == "$key_id_derived" ]]; then
-        echo "Minisign comment key id matches body: $comment_id_normalized"
-      else
-        echo "warning: Minisign comment key id $comment_id does not match body id $key_id_derived; ignoring untrusted comment"
-      fi
-    else
-      echo "warning: Minisign comment key id is not a hexadecimal id; ignoring untrusted comment"
-    fi
+  if [[ "$key_comment" == "untrusted comment: "* ]]; then
+    echo "Minisign public-key comment prefix recognized"
+  else
+    echo "warning: non-standard Minisign public-key comment; ignoring untrusted comment"
   fi
   [[ -z "$extra_line" ]] || echo "warning: extra public-key comment lines are ignored"
 
-  echo "Verifying AppImage minisign signature with configured public key id $key_id_derived"
+  echo "Verifying AppImage minisign signature with configured public key body id bytes $key_id_raw"
   minisign -Vm "$appimage" -x "$signature" -P "$key_body" >/dev/null 2>&1 \
     || die "AppImage minisign verification failed (empty, foreign, or invalid signature)"
 }
