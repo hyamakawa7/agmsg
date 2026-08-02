@@ -162,30 +162,31 @@ function LinuxSelect(props: PlatformSelectProps) {
   const [activeIndex, setActiveIndex] = useState(selectedIndex);
   const [open, setOpen] = useState(false);
   const [popupPosition, setPopupPosition] = useState<PlatformSelectPopupPosition | null>(null);
-  const shouldScrollActiveRef = useRef(false);
+  // A request counter keeps keyboard scrolling observable even when a
+  // boundary key targets the same active index (React otherwise bails out of
+  // the state update). Hover changes deliberately do not advance this count,
+  // so a stationary pointer cannot restart scroll-follow.
+  const [keyboardScrollRequest, setKeyboardScrollRequest] = useState(0);
 
   const setKeyboardActiveIndex = useCallback((index: number) => {
-    shouldScrollActiveRef.current = true;
+    setKeyboardScrollRequest((request) => request + 1);
     setActiveIndex(index);
   }, []);
 
   const setHoverActiveIndex = useCallback((index: number) => {
     // Moving the pointer over an option must not scroll under a stationary
     // pointer; only keyboard navigation owns active-option scroll tracking.
-    shouldScrollActiveRef.current = false;
     setActiveIndex(index);
   }, []);
 
   useEffect(() => {
     if (!open) {
-      shouldScrollActiveRef.current = false;
       setActiveIndex(selectedIndex);
     }
   }, [open, selectedIndex]);
 
   useLayoutEffect(() => {
-    if (!open || activeIndex < 0 || !shouldScrollActiveRef.current) return;
-    shouldScrollActiveRef.current = false;
+    if (!open || activeIndex < 0) return;
     const popup = popupRef.current;
     const option = document.getElementById(`${listboxId}-option-${activeIndex}`);
     if (!popup || !(option instanceof HTMLElement)) return;
@@ -196,7 +197,7 @@ function LinuxSelect(props: PlatformSelectProps) {
       optionHeight: option.offsetHeight,
     });
     if (nextScrollTop !== popup.scrollTop) popup.scrollTop = nextScrollTop;
-  }, [activeIndex, listboxId, open]);
+  }, [keyboardScrollRequest, open]);
 
   const positionPopup = useCallback(() => {
     const trigger = triggerRef.current;
@@ -212,7 +213,6 @@ function LinuxSelect(props: PlatformSelectProps) {
 
   const closeMenu = useCallback(
     (commit: boolean) => {
-      shouldScrollActiveRef.current = false;
       if (commit && activeIndex >= 0) {
         const option = props.options[activeIndex];
         if (option && !option.disabled) props.onChange(option.value);
@@ -228,7 +228,7 @@ function LinuxSelect(props: PlatformSelectProps) {
   const openMenu = useCallback(
     () => {
       if (props.disabled || selectedIndex < 0) return;
-      shouldScrollActiveRef.current = true;
+      setKeyboardScrollRequest((request) => request + 1);
       setActiveIndex(selectedIndex);
       setOpen(true);
       positionPopup();
@@ -266,7 +266,6 @@ function LinuxSelect(props: PlatformSelectProps) {
     (index: number) => {
       const option = props.options[index];
       if (!option || option.disabled) return;
-      shouldScrollActiveRef.current = false;
       setActiveIndex(index);
       props.onChange(option.value);
       setOpen(false);
