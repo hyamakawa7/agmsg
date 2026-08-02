@@ -76,6 +76,10 @@ exec_to_nonexec_root="$(make_fixture exec-to-nonexec)"
 chmod a-x "$exec_to_nonexec_root/agmsg-core/$exec_relative"
 verify_failure exec-to-nonexec "$exec_to_nonexec_root"
 
+write_mode_root="$(make_fixture write-mode-change)"
+chmod 666 "$write_mode_root/agmsg-core/$nonexec_relative"
+verify_failure write-mode-change "$write_mode_root"
+
 missing_root="$(make_fixture missing)"
 mv "$missing_root/agmsg-core/$nonexec_relative" \
   "$missing_root/agmsg-core/$nonexec_relative.missing"
