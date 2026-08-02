@@ -58,6 +58,27 @@ The check must find one `.deb`, one executable `.AppImage`, and the matching
 `.AppImage.sig`, and no RPM. It also checks the Debian runtime dependencies and
 the executable bits of the bundled `agmsg-core` scripts in both formats.
 
+### Linux release validation (manual)
+
+The bundle script covers deterministic archive checks. Before publishing a
+desktop release, complete these checks on the built `.deb` and `.AppImage`
+executables as well:
+
+1. **Updater acceptance (plan 5(e)).** Point a test build at the candidate
+   `latest.json` and confirm that an AppImage accepts the `linux-x86_64` entry
+   containing the matching AppImage URL and `.AppImage.sig` contents. Confirm
+   that a `.deb` does not run an updater check and instead follows the release
+   page installation path. If an endpoint-backed check is not practical for a
+   release, record the first-release manual verification in the release notes.
+2. **Terminal copy/paste (plan 5(f)).** In each shipped format, verify all three
+   Linux terminal paths: right-click Copy, PRIMARY-selection middle-click
+   paste, and `Ctrl+Shift+C`/`Ctrl+Shift+V`. These checks preserve the Option B
+   decision to omit the inert native Edit submenu.
+3. **Runtime WebKit (plan 5(g)).** While each format is running, use `ldd`
+   (or `/proc/<pid>/maps`) to record which `libwebkit2gtk` is loaded. An
+   AppImage's bundled-versus-system WebKit behavior affects how the select
+   limitation depends on the host environment.
+
 Linux updater behavior is a product policy: only an AppImage self-updates. A
 Debian package could technically be replaced through `pkexec`, a GUI sudo
 prompt, or `dpkg -i`, but this project does not adopt a self-replacement flow

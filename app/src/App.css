@@ -36,7 +36,8 @@ body,
 
 /* Linux gets an explicit Ubuntu-compatible UI stack. Keep the base stack
    above unchanged so macOS and Windows retain their existing font choice. */
-.app.platform-linux {
+.app.platform-linux,
+.platform-select-popup.platform-linux {
   font-family: system-ui, Ubuntu, Cantarell, -apple-system, "SF Pro Text", Helvetica, Arial, sans-serif;
 }
 

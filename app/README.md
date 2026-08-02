@@ -166,15 +166,9 @@ resolve as soon as the tap commit lands.
 
 ## Known limitations
 
-- On Linux, a native select popup opened near the bottom edge of the screen can
-  clip lower options (especially when the window is maximized). Use the arrow
-  keys to reach and select those options. The custom Linux controls cover the
-  app's three select paths; this limitation remains relevant to native-popup
-  fallback paths. X11 was tested; Wayland and HiDPI were not tested.
-- Do not use the mouse wheel while an open select popup is under the pointer: the
-  item under the cursor can be selected and the popup closes, which may change
-  the destination unintentionally. (Wheel changes on a closed selector were not
-  observed in the Phase 2 checks.)
+- X11 was tested. Wayland and HiDPI were not tested.
+- Printable-character typeahead is not implemented in the custom select controls;
+  use the arrow keys, Home/End, or the option list instead.
 - If terminal output has no colour, check the shell that launched agmsg for
   `NO_COLOR`. Remove that variable when colour is wanted; the app respects the
   user's `NO_COLOR` setting and does not override it.
