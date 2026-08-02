@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   calculatePlatformSelectPopupPosition,
   calculatePlatformSelectScrollTop,
+  advancePlatformSelectKeyboardScrollRequest,
   nextPlatformSelectIndex,
   type PlatformSelectOption,
 } from "./PlatformSelect";
@@ -62,6 +63,16 @@ describe("calculatePlatformSelectScrollTop", () => {
         optionHeight: 20,
       }),
     ).toBe(40);
+  });
+});
+
+describe("advancePlatformSelectKeyboardScrollRequest", () => {
+  it("returns a new token for every keyboard/open request", () => {
+    const first = advancePlatformSelectKeyboardScrollRequest(0);
+    const second = advancePlatformSelectKeyboardScrollRequest(first);
+
+    expect(first).toBe(1);
+    expect(second).toBe(2);
   });
 });
 

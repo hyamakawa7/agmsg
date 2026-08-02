@@ -72,6 +72,11 @@ export function calculatePlatformSelectScrollTop({
   return scrollTop;
 }
 
+/** Give each keyboard/open scroll request a distinct token for the layout effect. */
+export function advancePlatformSelectKeyboardScrollRequest(request: number): number {
+  return request + 1;
+}
+
 type PlatformSelectPopupPositionBase = {
   left: number;
   width: number;
@@ -169,7 +174,7 @@ function LinuxSelect(props: PlatformSelectProps) {
   const [keyboardScrollRequest, setKeyboardScrollRequest] = useState(0);
 
   const setKeyboardActiveIndex = useCallback((index: number) => {
-    setKeyboardScrollRequest((request) => request + 1);
+    setKeyboardScrollRequest(advancePlatformSelectKeyboardScrollRequest);
     setActiveIndex(index);
   }, []);
 
@@ -228,7 +233,7 @@ function LinuxSelect(props: PlatformSelectProps) {
   const openMenu = useCallback(
     () => {
       if (props.disabled || selectedIndex < 0) return;
-      setKeyboardScrollRequest((request) => request + 1);
+      setKeyboardScrollRequest(advancePlatformSelectKeyboardScrollRequest);
       setActiveIndex(selectedIndex);
       setOpen(true);
       positionPopup();
