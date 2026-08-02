@@ -22,10 +22,14 @@ BUNDLE_DIR="$(cd -- "$BUNDLE_DIR" && pwd -P)"
 command -v dpkg-deb >/dev/null 2>&1 || die "dpkg-deb is required"
 command -v jq >/dev/null 2>&1 || die "jq is required to read the updater public key"
 command -v minisign >/dev/null 2>&1 || die "minisign is required to verify the AppImage signature"
+command -v diff >/dev/null 2>&1 || die "diff is required to compare bundled resource modes"
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 source "$APP_DIR/scripts/verify-minisign-appimage.sh"
+source_core="$APP_DIR/src-tauri/resources/agmsg-core"
+[[ -d "$source_core" ]] \
+  || die "source agmsg-core resource directory is missing; run bundle-core.sh first: $source_core"
 
 shopt -s nullglob
 deb_files=("$BUNDLE_DIR"/deb/*.deb)
@@ -116,24 +120,32 @@ grep -Eiq 'libwebkit2gtk' <<<"$depends" \
 grep -Eiq 'libgtk-3' <<<"$depends" \
   || die "Debian Depends is missing a libgtk-3 runtime dependency"
 
-verify_core_scripts() {
+verify_core_tree_modes() {
   local root="$1"
   local label="$2"
   local core
+  local source_manifest="$tmp_dir/${label}-source-core.manifest"
+  local bundle_manifest="$tmp_dir/${label}-bundle-core.manifest"
+
   core="$(find "$root" -type d -name agmsg-core -print -quit)"
   [[ -n "$core" ]] || die "$label: agmsg-core resource directory is missing"
-  [[ -f "$core/install.sh" ]] || die "$label: agmsg-core/install.sh is missing"
-  [[ -f "$core/uninstall.sh" ]] || die "$label: agmsg-core/uninstall.sh is missing"
 
-  while IFS= read -r script; do
-    [[ -x "$script" ]] || die "$label: script is not executable: $script"
-  done < <(find "$core" -type f \( -name 'install.sh' -o -name 'uninstall.sh' -o -path '*/scripts/*.sh' \) -print)
+  # Helpers beginning with `_` are intentionally mode 0644 because they are
+  # sourced. Compare every relative path, file type, and mode against the
+  # source tree instead of assuming that every .sh is directly executable.
+  find "$source_core" -mindepth 1 -printf '%P\t%y\t%m\n' \
+    | LC_ALL=C sort >"$source_manifest"
+  find "$core" -mindepth 1 -printf '%P\t%y\t%m\n' \
+    | LC_ALL=C sort >"$bundle_manifest"
+  if ! diff -u "$source_manifest" "$bundle_manifest"; then
+    die "$label: agmsg-core paths/types/modes differ from source tree"
+  fi
 }
 
 deb_root="$tmp_dir/deb"
 mkdir -p "$deb_root"
 dpkg-deb -x "${deb_files[0]}" "$deb_root"
-verify_core_scripts "$deb_root" "deb"
+verify_core_tree_modes "$deb_root" "deb"
 
 appimage_root="$tmp_dir/appimage"
 mkdir -p "$appimage_root"
@@ -144,7 +156,7 @@ if ! (cd "$appimage_root" && "$appimage" --appimage-extract >/dev/null); then
 fi
 [[ -d "$appimage_root/squashfs-root" ]] \
   || die "AppImage squashfs extraction did not produce squashfs-root"
-verify_core_scripts "$appimage_root/squashfs-root" "AppImage"
+verify_core_tree_modes "$appimage_root/squashfs-root" "AppImage"
 
 echo "verify-linux-bundles: OK"
 echo "  deb:       ${deb_files[0]}"
