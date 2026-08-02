@@ -37,7 +37,7 @@ describe("calculatePlatformSelectScrollTop", () => {
         scrollTop: 0,
         clientHeight: 100,
         optionTop: 120,
-        optionBottom: 140,
+        optionHeight: 20,
       }),
     ).toBe(40);
   });
@@ -48,7 +48,7 @@ describe("calculatePlatformSelectScrollTop", () => {
         scrollTop: 80,
         clientHeight: 100,
         optionTop: 40,
-        optionBottom: 60,
+        optionHeight: 20,
       }),
     ).toBe(40);
   });
@@ -59,7 +59,7 @@ describe("calculatePlatformSelectScrollTop", () => {
         scrollTop: 40,
         clientHeight: 100,
         optionTop: 80,
-        optionBottom: 100,
+        optionHeight: 20,
       }),
     ).toBe(40);
   });
