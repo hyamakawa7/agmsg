@@ -54,6 +54,7 @@ done < <(find "$BUNDLE_DIR" -mindepth 2 -maxdepth 2 -type f -print)
 verify_appimage_signature() {
   local config="$APP_DIR/src-tauri/tauri.conf.json"
   local encoded_key key_text key_comment key_body extra_line
+  local key_hex key_id_raw key_id_derived comment_id comment_id_normalized i
 
   encoded_key="$(jq -er '.plugins.updater.pubkey // empty' "$config")" \
     || die "updater public key is missing from $config"
@@ -64,13 +65,44 @@ verify_appimage_signature() {
   key_comment="$(sed -n '1p' <<<"$key_text")"
   key_body="$(sed -n '2p' <<<"$key_text")"
   extra_line="$(sed -n '3p' <<<"$key_text")"
-  [[ "$key_comment" == "untrusted comment: minisign public key: "* ]] \
-    || die "updater public key has an invalid minisign comment"
   [[ "$key_body" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] \
     || die "updater public key has an invalid minisign body"
-  [[ -z "$extra_line" ]] || die "updater public key has unexpected extra lines"
 
-  echo "Verifying AppImage minisign signature with configured public key"
+  # The comment is explicitly untrusted metadata. Keep it for diagnostics,
+  # but never use it as an acceptance gate. The decoded body is the Minisign
+  # public-key structure: Ed marker + 8-byte little-endian key id + 32-byte
+  # public key.
+  key_hex="$(printf '%s' "$key_body" | base64 --decode 2>/dev/null | od -An -tx1 -v | tr -d '[:space:]')" \
+    || die "updater public key body is not valid base64"
+  [[ "$key_hex" =~ ^[[:xdigit:]]{84}$ ]] \
+    || die "updater public key body must decode to 42 bytes"
+  [[ "${key_hex:0:4}" == "4564" ]] \
+    || die "updater public key body has an invalid Ed25519 marker"
+  key_id_raw="${key_hex:4:16}"
+  key_id_derived=""
+  for ((i=${#key_id_raw}-2; i>=0; i-=2)); do
+    key_id_derived+="${key_id_raw:i:2}"
+  done
+  key_id_derived="${key_id_derived^^}"
+
+  echo "Minisign public-key comment: ${key_comment:-<empty>}"
+  if [[ "$key_comment" == *"minisign public key: "* ]]; then
+    comment_id="${key_comment##*minisign public key: }"
+    if [[ "$comment_id" =~ ^[[:xdigit:]]{1,16}$ ]]; then
+      comment_id_normalized="$(printf '%016s' "$comment_id" | tr ' ' '0')"
+      comment_id_normalized="${comment_id_normalized^^}"
+      if [[ "$comment_id_normalized" == "$key_id_derived" ]]; then
+        echo "Minisign comment key id matches body: $comment_id_normalized"
+      else
+        echo "warning: Minisign comment key id $comment_id does not match body id $key_id_derived; ignoring untrusted comment"
+      fi
+    else
+      echo "warning: Minisign comment key id is not a hexadecimal id; ignoring untrusted comment"
+    fi
+  fi
+  [[ -z "$extra_line" ]] || echo "warning: extra public-key comment lines are ignored"
+
+  echo "Verifying AppImage minisign signature with configured public key id $key_id_derived"
   minisign -Vm "$appimage" -x "$signature" -P "$key_body" >/dev/null 2>&1 \
     || die "AppImage minisign verification failed (empty, foreign, or invalid signature)"
 }
