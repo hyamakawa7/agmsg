@@ -93,24 +93,31 @@ the current file and preserve the existing `darwin-aarch64` and
 `windows-x86_64` objects; merge only the new `linux-x86_64` object. Do not
 replace the map with a Linux-only object, or the existing macOS/Windows updater
 paths will stop working. The Linux entry must pair the AppImage URL with the
-exact contents of its v2 signature file (not a URL to the signature file):
+exact contents of its v2 signature file (not a URL to the signature file).
+Local bundle verification requires `jq` and `minisign` on `PATH`:
 
 ```bash
+set -euo pipefail
+
 APPIMAGE_URL="https://github.com/fujibee/agmsg/releases/download/app-latest/agmsg_0.4.0_amd64.AppImage"
 APPIMAGE_SIG="$(cat agmsg_0.4.0_amd64.AppImage.sig)"
+candidate="latest.json.next"
 jq --arg url "$APPIMAGE_URL" --arg signature "$APPIMAGE_SIG" \
   '.platforms["linux-x86_64"] = {url: $url, signature: $signature}' \
-  latest.json > latest.json.next
-mv latest.json.next latest.json
+  latest.json > "$candidate"
 
 # Inspect the merge: the existing macOS/Windows entries must still be present,
 # and Linux must point to an AppImage with a non-empty matching signature.
 jq -e '
   .platforms["darwin-aarch64"] != null and
   .platforms["windows-x86_64"] != null and
-  (.platforms["linux-x86_64"].url | endswith(".AppImage")) and
-  (.platforms["linux-x86_64"].signature | length > 0)
-' latest.json
+  (.platforms["linux-x86_64"] != null) and
+  (.platforms["linux-x86_64"].url |
+    if type == "string" then endswith(".AppImage") else false end) and
+  (.platforms["linux-x86_64"].signature |
+    if type == "string" then length > 0 else false end)
+' "$candidate"
+mv -- "$candidate" latest.json
 ```
 
 When updating the fixed `app-latest` release, upload the Linux `.deb`, the
