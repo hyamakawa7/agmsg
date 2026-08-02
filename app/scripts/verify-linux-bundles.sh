@@ -23,6 +23,10 @@ command -v dpkg-deb >/dev/null 2>&1 || die "dpkg-deb is required"
 command -v jq >/dev/null 2>&1 || die "jq is required to read the updater public key"
 command -v minisign >/dev/null 2>&1 || die "minisign is required to verify the AppImage signature"
 
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+source "$APP_DIR/scripts/verify-minisign-appimage.sh"
+
 shopt -s nullglob
 deb_files=("$BUNDLE_DIR"/deb/*.deb)
 appimage_files=("$BUNDLE_DIR"/appimage/*.AppImage)
@@ -54,7 +58,7 @@ done < <(find "$BUNDLE_DIR" -mindepth 2 -maxdepth 2 -type f -print)
 verify_appimage_signature() {
   local config="$APP_DIR/src-tauri/tauri.conf.json"
   local encoded_key key_text key_comment key_body extra_line
-  local key_hex key_id_raw
+  local key_hex key_id_raw decoded_signature
 
   encoded_key="$(jq -er '.plugins.updater.pubkey // empty' "$config")" \
     || die "updater public key is missing from $config"
@@ -90,9 +94,11 @@ verify_appimage_signature() {
   fi
   [[ -z "$extra_line" ]] || echo "warning: extra public-key comment lines are ignored"
 
+  decoded_signature="$tmp_dir/appimage.minisig"
   echo "Verifying AppImage minisign signature with configured public key body id bytes $key_id_raw"
-  minisign -Vm "$appimage" -x "$signature" -P "$key_body" >/dev/null 2>&1 \
-    || die "AppImage minisign verification failed (empty, foreign, or invalid signature)"
+  if ! verify_minisign_appimage_signature "$appimage" "$signature" "$key_body" "$decoded_signature"; then
+    die "AppImage minisign verification failed (invalid Base64, empty, foreign, or invalid signature)"
+  fi
 }
 
 verify_appimage_signature
@@ -123,9 +129,6 @@ verify_core_scripts() {
     [[ -x "$script" ]] || die "$label: script is not executable: $script"
   done < <(find "$core" -type f \( -name 'install.sh' -o -name 'uninstall.sh' -o -path '*/scripts/*.sh' \) -print)
 }
-
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
 
 deb_root="$tmp_dir/deb"
 mkdir -p "$deb_root"

@@ -204,6 +204,9 @@ jobs:
           echo "$install_dir" >> "$GITHUB_PATH"
           "$install_dir/minisign" -v
 
+      - name: Verify Tauri AppImage signature encoding
+        run: scripts/test-verify-minisign-appimage.sh
+
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
