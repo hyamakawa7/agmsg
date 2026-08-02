@@ -94,7 +94,10 @@ the current file and preserve the existing `darwin-aarch64` and
 replace the map with a Linux-only object, or the existing macOS/Windows updater
 paths will stop working. The Linux entry must pair the AppImage URL with the
 exact contents of its v2 signature file (not a URL to the signature file).
-Local bundle verification requires `jq` and `minisign` on `PATH`:
+Local bundle verification requires `jq` and `minisign` on `PATH`.
+Run `app/scripts/bundle-core.sh` first; the verifier fails closed when its
+source `agmsg-core` tree is absent because packaged resource modes are compared
+against that tree.
 
 ```bash
 set -euo pipefail

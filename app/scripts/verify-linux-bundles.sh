@@ -22,14 +22,13 @@ BUNDLE_DIR="$(cd -- "$BUNDLE_DIR" && pwd -P)"
 command -v dpkg-deb >/dev/null 2>&1 || die "dpkg-deb is required"
 command -v jq >/dev/null 2>&1 || die "jq is required to read the updater public key"
 command -v minisign >/dev/null 2>&1 || die "minisign is required to verify the AppImage signature"
-command -v diff >/dev/null 2>&1 || die "diff is required to compare bundled resource modes"
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 source "$APP_DIR/scripts/verify-minisign-appimage.sh"
 source_core="$APP_DIR/src-tauri/resources/agmsg-core"
 [[ -d "$source_core" ]] \
-  || die "source agmsg-core resource directory is missing; run bundle-core.sh first: $source_core"
+  || die "source agmsg-core is missing; run scripts/bundle-core.sh before verify-linux-bundles.sh: $source_core"
 
 shopt -s nullglob
 deb_files=("$BUNDLE_DIR"/deb/*.deb)
@@ -126,20 +125,37 @@ verify_core_tree_modes() {
   local core
   local source_manifest="$tmp_dir/${label}-source-core.manifest"
   local bundle_manifest="$tmp_dir/${label}-bundle-core.manifest"
+  local relative_path file_type mode expected actual
+  declare -A bundle_entries=()
 
   core="$(find "$root" -type d -name agmsg-core -print -quit)"
   [[ -n "$core" ]] || die "$label: agmsg-core resource directory is missing"
 
-  # Helpers beginning with `_` are intentionally mode 0644 because they are
-  # sourced. Compare every relative path, file type, and mode against the
-  # source tree instead of assuming that every .sh is directly executable.
+  # Git records which files are executable. This comparison checks whether
+  # packaging preserved those source modes; it does not make every .sh
+  # executable, because helpers beginning with `_` are intentionally sourced.
+  # Every source entry must survive with the same type and mode. Tauri may add
+  # other entries, so the reverse set difference is intentionally tolerated.
   find "$source_core" -mindepth 1 -printf '%P\t%y\t%m\n' \
     | LC_ALL=C sort >"$source_manifest"
   find "$core" -mindepth 1 -printf '%P\t%y\t%m\n' \
     | LC_ALL=C sort >"$bundle_manifest"
-  if ! diff -u "$source_manifest" "$bundle_manifest"; then
-    die "$label: agmsg-core paths/types/modes differ from source tree"
-  fi
+
+  while IFS=$'\t' read -r relative_path file_type mode; do
+    [[ -n "$relative_path" ]] || continue
+    bundle_entries["$relative_path"]="$file_type:$mode"
+  done <"$bundle_manifest"
+
+  while IFS=$'\t' read -r relative_path file_type mode; do
+    [[ -n "$relative_path" ]] || continue
+    if [[ -z ${bundle_entries["$relative_path"]+present} ]]; then
+      die "$label: agmsg-core path missing after packaging: $relative_path"
+    fi
+    expected="$file_type:$mode"
+    actual="${bundle_entries["$relative_path"]}"
+    [[ "$actual" == "$expected" ]] \
+      || die "$label: agmsg-core type/mode changed at $relative_path (source $expected, bundle $actual)"
+  done <"$source_manifest"
 }
 
 deb_root="$tmp_dir/deb"
