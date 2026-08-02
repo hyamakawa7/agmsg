@@ -9,6 +9,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   LINUX_TERMINAL_FONT_FAMILY,
+  isLinuxTerminalCopyShortcut,
   platformClassForUserAgent,
 } from "./platform";
 import { createWriteBatcher } from "./writeBatcher";
@@ -94,6 +95,38 @@ export function TerminalPane({
     fitRef.current = fit;
     term.loadAddon(fit);
     term.open(ref.current!);
+
+    // GTK's native Edit menu is intentionally absent on Linux: its predefined
+    // copy action is inert in the WebKitGTK build. Keep the terminal's normal
+    // xterm copy event as the first path so the same selection handling used by
+    // right-click Copy remains in use for Ctrl+Shift+C. Clipboard API support
+    // is not guaranteed for Tauri's custom scheme, so fall back to it only if
+    // execCommand did not handle the copy. Other platforms keep xterm's
+    // default key handling unchanged.
+    term.attachCustomKeyEventHandler((event) => {
+      if (
+        !isLinuxTerminalCopyShortcut(navigator.userAgent, event, term.hasSelection())
+      ) {
+        return true;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      term.focus();
+      let copied = false;
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+      if (!copied) {
+        const selection = term.getSelection();
+        const writeText = navigator.clipboard?.writeText;
+        if (selection && writeText) {
+          void writeText.call(navigator.clipboard, selection).catch(() => {});
+        }
+      }
+      return false;
+    });
 
     // Fit to the container's CURRENT size and tell the PTY — but only when the
     // pane is actually laid out. A pane that mounts while its tab is inactive

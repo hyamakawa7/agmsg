@@ -13,6 +13,7 @@ import {
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   LINUX_TERMINAL_FONT_FAMILY,
+  isLinuxTerminalCopyShortcut,
   platformClassForUserAgent,
 } from "./platform";
 
@@ -41,6 +42,38 @@ describe("Linux terminal font fallback", () => {
     expect(LINUX_TERMINAL_FONT_FAMILY).toBe(
       "'Ubuntu Mono', 'DejaVu Sans Mono', Menlo, Monaco, 'Courier New', monospace",
     );
+  });
+});
+
+describe("Linux terminal copy shortcut", () => {
+  const linux = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36";
+  const windows = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+
+  const event = (overrides: Partial<KeyboardEvent> = {}) => ({
+    type: "keydown",
+    code: "KeyC",
+    ctrlKey: true,
+    shiftKey: true,
+    altKey: false,
+    metaKey: false,
+    ...overrides,
+  });
+
+  it("accepts Linux Ctrl+Shift+KeyC when text is selected", () => {
+    expect(isLinuxTerminalCopyShortcut(linux, event(), true)).toBe(true);
+  });
+
+  it("rejects the chord on non-Linux platforms", () => {
+    expect(isLinuxTerminalCopyShortcut(windows, event(), true)).toBe(false);
+  });
+
+  it("rejects Ctrl+C and Ctrl+Shift+V", () => {
+    expect(isLinuxTerminalCopyShortcut(linux, event({ shiftKey: false }), true)).toBe(false);
+    expect(isLinuxTerminalCopyShortcut(linux, event({ code: "KeyV" }), true)).toBe(false);
+  });
+
+  it("does not capture the chord when there is no selection", () => {
+    expect(isLinuxTerminalCopyShortcut(linux, event(), false)).toBe(false);
   });
 });
 

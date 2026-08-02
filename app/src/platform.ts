@@ -10,6 +10,33 @@ export function platformClassForUserAgent(userAgent: string): string {
   return "";
 }
 
+export type TerminalCopyShortcutEvent = Pick<
+  KeyboardEvent,
+  "type" | "code" | "ctrlKey" | "shiftKey" | "altKey" | "metaKey"
+>;
+
+/**
+ * Whether an event is the Linux terminal copy chord and there is text to copy.
+ * Keeping this decision pure lets the platform gate and the keyboard shape be
+ * tested without constructing a DOM KeyboardEvent in vitest.
+ */
+export function isLinuxTerminalCopyShortcut(
+  userAgent: string,
+  event: TerminalCopyShortcutEvent,
+  hasSelection: boolean,
+): boolean {
+  return (
+    hasSelection &&
+    platformClassForUserAgent(userAgent) === "platform-linux" &&
+    event.type === "keydown" &&
+    event.code === "KeyC" &&
+    event.ctrlKey &&
+    event.shiftKey &&
+    !event.altKey &&
+    !event.metaKey
+  );
+}
+
 // Keep the xterm.js stacks in one place so TerminalPane cannot accidentally
 // change the non-Linux fallback while adding a Linux-only font preference.
 export const DEFAULT_TERMINAL_FONT_FAMILY = "Menlo, Monaco, 'Courier New', monospace";
