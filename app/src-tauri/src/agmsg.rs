@@ -195,6 +195,19 @@ fn bash_command() -> Result<std::process::Command, String> {
     if let Some(path) = crate::imported_path() {
         cmd.env("PATH", path);
     }
+    // Match pty_spawn: AppImage's bundled sqlite3 must not leak into agmsg
+    // core's host-side scripts/CLI. Non-Linux and non-AppImage environments
+    // produce Unchanged and retain their inherited library path.
+    #[cfg(target_os = "linux")]
+    match crate::appimage_library_path_action_from_environment() {
+        crate::AppImageLibraryPathAction::Unchanged => {}
+        crate::AppImageLibraryPathAction::Set(path) => {
+            cmd.env("LD_LIBRARY_PATH", path);
+        }
+        crate::AppImageLibraryPathAction::Remove => {
+            cmd.env_remove("LD_LIBRARY_PATH");
+        }
+    }
     Ok(cmd)
 }
 

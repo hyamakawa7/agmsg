@@ -197,6 +197,19 @@ pub fn pty_spawn(
     if let Some(path) = crate::imported_path() {
         builder.env("PATH", path);
     }
+    // AppImage's launcher prepends its bundled libraries to this process's
+    // environment. Agent CLIs must resolve against the host libraries instead
+    // (notably sqlite3), so restore or sanitize that path for Linux children.
+    #[cfg(target_os = "linux")]
+    match crate::appimage_library_path_action_from_environment() {
+        crate::AppImageLibraryPathAction::Unchanged => {}
+        crate::AppImageLibraryPathAction::Set(path) => {
+            builder.env("LD_LIBRARY_PATH", path);
+        }
+        crate::AppImageLibraryPathAction::Remove => {
+            builder.env_remove("LD_LIBRARY_PATH");
+        }
+    }
 
     let mut child = pair.slave.spawn_command(builder).map_err(|e| e.to_string())?;
     drop(pair.slave);

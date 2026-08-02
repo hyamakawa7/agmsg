@@ -26,6 +26,97 @@ pub(crate) fn imported_path() -> Option<&'static str> {
     IMPORTED_PATH.get().map(|s| s.as_str())
 }
 
+/// The child-process action for `LD_LIBRARY_PATH` when the app is running
+/// from an AppImage. Keeping the action explicit distinguishes an unchanged
+/// inherited variable from an intentional `env_remove`.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum AppImageLibraryPathAction {
+    Unchanged,
+    Set(String),
+    Remove,
+}
+
+fn is_appdir_path(path: &str, appdir: &str) -> bool {
+    let root = appdir.trim_end_matches('/');
+    if root.is_empty() {
+        return false;
+    }
+    path == root || path.strip_prefix(root).is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+/// Decide how a child should receive `LD_LIBRARY_PATH`.
+///
+/// AppImage's launcher saves the pre-launch value in
+/// `LD_LIBRARY_PATH_ORIG`. Prefer restoring that exact value; when it is not
+/// available, remove only entries rooted at `APPDIR` from the injected path.
+/// The caller can then apply `Remove` with the platform-specific command API.
+/// Non-Linux builds, missing/empty `APPDIR`, and an absent current variable are
+/// deliberately left unchanged.
+pub(crate) fn appimage_library_path_action(
+    is_linux: bool,
+    appdir: Option<&str>,
+    current: Option<&str>,
+    original: Option<&str>,
+) -> AppImageLibraryPathAction {
+    if !is_linux {
+        return AppImageLibraryPathAction::Unchanged;
+    }
+    let Some(appdir) = appdir.filter(|value| !value.is_empty()) else {
+        return AppImageLibraryPathAction::Unchanged;
+    };
+
+    if let Some(original) = original {
+        return if original.is_empty() {
+            AppImageLibraryPathAction::Remove
+        } else {
+            AppImageLibraryPathAction::Set(original.to_owned())
+        };
+    }
+
+    let Some(current) = current else {
+        return AppImageLibraryPathAction::Unchanged;
+    };
+    let mut removed = false;
+    let filtered = current
+        .split(':')
+        .filter(|path| {
+            let keep = !is_appdir_path(path, appdir);
+            removed |= !keep;
+            keep
+        })
+        .collect::<Vec<_>>()
+        .join(":");
+    if !removed {
+        return AppImageLibraryPathAction::Unchanged;
+    }
+    if filtered.is_empty() {
+        AppImageLibraryPathAction::Remove
+    } else {
+        AppImageLibraryPathAction::Set(filtered)
+    }
+}
+
+/// Read the AppImage launcher variables only on Linux. The pure decision
+/// function above remains available to all targets and tests.
+pub(crate) fn appimage_library_path_action_from_environment() -> AppImageLibraryPathAction {
+    #[cfg(target_os = "linux")]
+    {
+        let appdir = std::env::var("APPDIR").ok();
+        let current = std::env::var("LD_LIBRARY_PATH").ok();
+        let original = std::env::var("LD_LIBRARY_PATH_ORIG").ok();
+        return appimage_library_path_action(
+            true,
+            appdir.as_deref(),
+            current.as_deref(),
+            original.as_deref(),
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        AppImageLibraryPathAction::Unchanged
+    }
+}
+
 /// The native menu's current language (BCP-47 code, e.g. "ja", "zh-CN") —
 /// the frontend pushes its i18next language here via `set_menu_language` on
 /// startup and on every change, since React's i18n can't reach this
@@ -872,8 +963,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        passwd_shell_for_user, path_import_log_path, resolve_login_shell_with_probes, select_login_shell,
-        updater_allowed,
+        appimage_library_path_action, passwd_shell_for_user, path_import_log_path,
+        resolve_login_shell_with_probes, select_login_shell, updater_allowed,
+        AppImageLibraryPathAction,
     };
     use tauri::utils::config::BundleType;
     use std::cell::Cell;
@@ -1005,5 +1097,79 @@ mod tests {
                 "non-Linux updater policy unexpectedly disabled for {label}"
             );
         }
+    }
+
+    #[test]
+    fn appimage_library_path_restores_the_original_value_first() {
+        assert_eq!(
+            appimage_library_path_action(
+                true,
+                Some("/tmp/.mount_agmsg"),
+                Some("/tmp/.mount_agmsg/usr/lib:/usr/lib"),
+                Some("/usr/local/lib:/usr/lib"),
+            ),
+            AppImageLibraryPathAction::Set("/usr/local/lib:/usr/lib".into())
+        );
+    }
+
+    #[test]
+    fn appimage_library_path_removes_only_appdir_entries_when_original_is_missing() {
+        assert_eq!(
+            appimage_library_path_action(
+                true,
+                Some("/tmp/.mount_agmsg"),
+                Some("/usr/lib:/tmp/.mount_agmsg/usr/lib:/tmp/.mount_agmsg/lib:/opt/app"),
+                None,
+            ),
+            AppImageLibraryPathAction::Set("/usr/lib:/opt/app".into())
+        );
+        assert_eq!(
+            appimage_library_path_action(
+                true,
+                Some("/tmp/.mount_agmsg"),
+                Some("/tmp/.mount_agmsg2/usr/lib"),
+                None,
+            ),
+            AppImageLibraryPathAction::Unchanged
+        );
+    }
+
+    #[test]
+    fn appimage_library_path_removes_empty_results_and_preserves_non_appimage_inputs() {
+        assert_eq!(
+            appimage_library_path_action(
+                true,
+                Some("/tmp/.mount_agmsg"),
+                Some("/tmp/.mount_agmsg/usr/lib"),
+                None,
+            ),
+            AppImageLibraryPathAction::Remove
+        );
+        assert_eq!(
+            appimage_library_path_action(
+                true,
+                Some("/tmp/.mount_agmsg"),
+                Some("/usr/lib"),
+                Some(""),
+            ),
+            AppImageLibraryPathAction::Remove
+        );
+        assert_eq!(
+            appimage_library_path_action(
+                false,
+                Some("/tmp/.mount_agmsg"),
+                Some("/tmp/.mount_agmsg/usr/lib:/usr/lib"),
+                None,
+            ),
+            AppImageLibraryPathAction::Unchanged
+        );
+        assert_eq!(
+            appimage_library_path_action(true, None, Some("/usr/lib"), None),
+            AppImageLibraryPathAction::Unchanged
+        );
+        assert_eq!(
+            appimage_library_path_action(true, Some("/tmp/.mount_agmsg"), None, None),
+            AppImageLibraryPathAction::Unchanged
+        );
     }
 }
