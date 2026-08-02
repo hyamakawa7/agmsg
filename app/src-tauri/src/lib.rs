@@ -145,12 +145,6 @@ pub(crate) fn sanitize_appimage_env(
     }
 }
 
-#[cfg(target_os = "linux")]
-fn appimage_child_env_enabled() -> bool {
-    let appdir = std::env::var("APPDIR").ok();
-    valid_appdir(appdir.as_deref()).is_some()
-}
-
 /// Read one AppImage launcher variable and turn its sanitized value into a
 /// Read one AppImage launcher variable and turn its sanitized value into a
 /// child-only action. Linux callers enter this path only when APPDIR is a valid
@@ -178,43 +172,46 @@ pub(crate) fn appimage_env_action_for_context(
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) fn appimage_env_action(spec: AppImageEnvSpec) -> AppImageEnvAction {
-    let appdir = std::env::var("APPDIR").ok();
-    let value = std::env::var(spec.name).ok();
-    appimage_env_action_for_context(
-        appimage_child_env_enabled(),
-        spec,
-        value.as_deref(),
-        appdir.as_deref(),
-    )
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn appimage_env_action_with_value(
-    spec: AppImageEnvSpec,
-    value: Option<&str>,
-) -> AppImageEnvAction {
-    let appdir = std::env::var("APPDIR").ok();
-    appimage_env_action_for_context(
-        appimage_child_env_enabled(),
-        spec,
-        value,
-        appdir.as_deref(),
-    )
-}
-
-#[cfg(target_os = "linux")]
 pub(crate) fn for_each_appimage_env_action(
+    imported_path: Option<&str>,
+    apply: impl FnMut(AppImageEnvSpec, AppImageEnvAction),
+) {
+    let appdir = std::env::var("APPDIR").ok();
+    for_each_appimage_env_action_for_context(
+        valid_appdir(appdir.as_deref()).is_some(),
+        appdir.as_deref(),
+        imported_path,
+        apply,
+    );
+}
+
+#[cfg(target_os = "linux")]
+/// Build child environment actions from an explicit Linux/AppImage context.
+/// A supplied `imported_path` remains an explicit PATH override even when
+/// sanitization leaves its value unchanged; only an absent override keeps the
+/// inherited PATH's `Unchanged` semantics.
+pub(crate) fn for_each_appimage_env_action_for_context(
+    enabled: bool,
+    appdir: Option<&str>,
     imported_path: Option<&str>,
     mut apply: impl FnMut(AppImageEnvSpec, AppImageEnvAction),
 ) {
-    let path_action = imported_path.map_or_else(
-        || appimage_env_action(APPIMAGE_PATH_ENV),
-        |path| appimage_env_action_with_value(APPIMAGE_PATH_ENV, Some(path)),
-    );
+    let path_action = if let Some(path) = imported_path {
+        match appimage_env_action_for_context(enabled, APPIMAGE_PATH_ENV, Some(path), appdir) {
+            AppImageEnvAction::Unchanged if path.is_empty() => AppImageEnvAction::Remove,
+            AppImageEnvAction::Unchanged => AppImageEnvAction::Set(path.to_owned()),
+            action => action,
+        }
+    } else {
+        appimage_env_action_for_context(enabled, APPIMAGE_PATH_ENV, None, appdir)
+    };
     apply(APPIMAGE_PATH_ENV, path_action);
     for spec in APPIMAGE_CHILD_ENV_SPECS {
-        apply(spec, appimage_env_action(spec));
+        let value = std::env::var(spec.name).ok();
+        apply(
+            spec,
+            appimage_env_action_for_context(enabled, spec, value.as_deref(), appdir),
+        );
     }
 }
 
@@ -1107,6 +1104,9 @@ mod tests {
     use std::cell::Cell;
     use std::path::Path;
 
+    #[cfg(target_os = "linux")]
+    use super::for_each_appimage_env_action_for_context;
+
     #[test]
     fn login_shell_precedence_is_environment_then_account_then_passwd_then_fallback() {
         assert_eq!(
@@ -1233,6 +1233,66 @@ mod tests {
                 "non-Linux updater policy unexpectedly disabled for {label}"
             );
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn imported_path_is_explicitly_set_without_appdir() {
+        let mut path_action = None;
+        for_each_appimage_env_action_for_context(
+            false,
+            None,
+            Some("/usr/local/bin:/usr/bin"),
+            |spec, action| {
+                if spec == APPIMAGE_PATH_ENV {
+                    path_action = Some(action);
+                }
+            },
+        );
+        assert_eq!(
+            path_action,
+            Some(AppImageEnvAction::Set("/usr/local/bin:/usr/bin".into()))
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn imported_host_path_is_explicitly_set_with_valid_appdir() {
+        let mut path_action = None;
+        for_each_appimage_env_action_for_context(
+            true,
+            Some("/tmp/.mount_agmsg"),
+            Some("/usr/local/bin:/usr/bin"),
+            |spec, action| {
+                if spec == APPIMAGE_PATH_ENV {
+                    path_action = Some(action);
+                }
+            },
+        );
+        assert_eq!(
+            path_action,
+            Some(AppImageEnvAction::Set("/usr/local/bin:/usr/bin".into()))
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn imported_path_is_filtered_and_explicitly_set_with_valid_appdir() {
+        let mut path_action = None;
+        for_each_appimage_env_action_for_context(
+            true,
+            Some("/tmp/.mount_agmsg"),
+            Some("/tmp/.mount_agmsg/usr/bin:/usr/bin"),
+            |spec, action| {
+                if spec == APPIMAGE_PATH_ENV {
+                    path_action = Some(action);
+                }
+            },
+        );
+        assert_eq!(
+            path_action,
+            Some(AppImageEnvAction::Set("/usr/bin".into()))
+        );
     }
 
     #[test]
