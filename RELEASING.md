@@ -76,8 +76,10 @@ executables as well:
    decision to omit the inert native Edit submenu.
 3. **Runtime WebKit (plan 5(g)).** While each format is running, use `ldd`
    (or `/proc/<pid>/maps`) to record which `libwebkit2gtk` is loaded. An
-   AppImage's bundled-versus-system WebKit behavior affects how the select
-   limitation depends on the host environment.
+   AppImage's bundled-versus-system WebKit behavior is an environment record
+   for diagnosing WebKit-dependent behavior such as a blank window (including
+   DMA-BUF renderer issues), and for documenting whether the AppImage bundles
+   WebKit or relies on the system library.
 
 Linux updater behavior is a product policy: only an AppImage self-updates. A
 Debian package could technically be replaced through `pkexec`, a GUI sudo
