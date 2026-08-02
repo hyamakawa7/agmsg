@@ -87,6 +87,7 @@
   "composer": {
     "asLabel": "como {{appUser}}",
     "targetPlaceholder": "para…",
+    "targetKeyboardHint": "Use ↑/↓ e depois Enter",
     "messagePlaceholder": "mensagem",
     "sendButton": "enviar",
     "noAppUser": "nenhum app-user — adicione um para enviar/receber",

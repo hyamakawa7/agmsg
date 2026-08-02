@@ -1522,6 +1522,15 @@ body.resizing-row {
   background-color: var(--panel);
   border-color: var(--border);
 }
+.composer-target-hint {
+  display: none;
+}
+.platform-linux .composer-target-hint {
+  display: inline;
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
 .composer button {
   background: var(--accent);
   color: #0b0e14;

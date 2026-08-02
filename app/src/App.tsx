@@ -2536,6 +2536,7 @@ export default function App() {
                       </option>
                     ))}
                   </select>
+                  <span className="composer-target-hint">{t("composer.targetKeyboardHint")}</span>
                   <input
                     ref={composerInputRef}
                     value={draft}
