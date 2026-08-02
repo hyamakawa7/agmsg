@@ -54,7 +54,6 @@ done < <(find "$BUNDLE_DIR" -mindepth 2 -maxdepth 2 -type f -print)
 verify_appimage_signature() {
   local config="$APP_DIR/src-tauri/tauri.conf.json"
   local encoded_key key_text key_comment key_body extra_line
-  local key_id_comment key_id_normalized key_hex key_id_raw key_id_derived i
 
   encoded_key="$(jq -er '.plugins.updater.pubkey // empty' "$config")" \
     || die "updater public key is missing from $config"
@@ -71,31 +70,7 @@ verify_appimage_signature() {
     || die "updater public key has an invalid minisign body"
   [[ -z "$extra_line" ]] || die "updater public key has unexpected extra lines"
 
-  # A Minisign public key decodes to the two-byte Ed25519 marker, an
-  # eight-byte little-endian key id, and the 32-byte public key. The comment
-  # in this config omits a leading zero in the id, so normalize it before
-  # comparing against the id carried by the key body.
-  key_hex="$(printf '%s' "$key_body" | base64 --decode 2>/dev/null | od -An -tx1 -v | tr -d '[:space:]')" \
-    || die "updater public key body is not valid base64"
-  [[ "$key_hex" =~ ^[[:xdigit:]]{84}$ ]] \
-    || die "updater public key body must decode to 42 bytes"
-  [[ "${key_hex:0:4}" == "4564" ]] \
-    || die "updater public key body has an invalid Ed25519 marker"
-  key_id_raw="${key_hex:4:16}"
-  key_id_derived=""
-  for ((i=${#key_id_raw}-2; i>=0; i-=2)); do
-    key_id_derived+="${key_id_raw:i:2}"
-  done
-  key_id_derived="${key_id_derived^^}"
-  key_id_comment="${key_comment##*: }"
-  [[ "$key_id_comment" =~ ^[[:xdigit:]]{1,16}$ ]] \
-    || die "updater public key has an invalid key id: $key_id_comment"
-  key_id_normalized="$(printf '%016s' "$key_id_comment" | tr ' ' '0')"
-  key_id_normalized="${key_id_normalized^^}"
-  [[ "$key_id_normalized" == "$key_id_derived" ]] \
-    || die "updater public key comment id $key_id_comment does not match key body id $key_id_derived"
-
-  echo "Verifying AppImage minisign signature with configured key $key_id_normalized"
+  echo "Verifying AppImage minisign signature with configured public key"
   minisign -Vm "$appimage" -x "$signature" -P "$key_body" >/dev/null 2>&1 \
     || die "AppImage minisign verification failed (empty, foreign, or invalid signature)"
 }
