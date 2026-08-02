@@ -8,6 +8,7 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::menu::{AboutMetadataBuilder, CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::utils::config::BundleType;
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 /// The PATH import_login_shell_path() resolved, kept around so every spawn
@@ -408,8 +409,13 @@ fn make_menu(app: &AppHandle, lang: &str) -> tauri::Result<(Menu<Wry>, CheckMenu
                 .build(),
         ),
     )?;
-    let check_updates =
-        MenuItem::with_id(app, CHECK_UPDATES_ID, m("checkForUpdates"), true, None::<&str>)?;
+    let check_updates = MenuItem::with_id(
+        app,
+        CHECK_UPDATES_ID,
+        m("checkForUpdates"),
+        updater_enabled_for_current_platform(),
+        None::<&str>,
+    )?;
     #[cfg(target_os = "linux")]
     let app_menu = Submenu::with_items(
         app,
@@ -557,11 +563,38 @@ const PANE_LAYOUT_VERTICAL_ID: &str = "pane_layout_vertical";
 const PANE_LAYOUT_HORIZONTAL_ID: &str = "pane_layout_horizontal";
 const PANE_LAYOUT_TILE_ID: &str = "pane_layout_tile";
 
+/// Linux updates are a product policy: only AppImage bundles may update
+/// themselves. Other platforms retain their existing unconditional updater
+/// behavior, so the OS check is an explicit input rather than inferred from
+/// the bundle variant (which also contains macOS and Windows variants).
+fn updater_allowed(is_linux: bool, bundle: Option<BundleType>) -> bool {
+    !is_linux || matches!(bundle, Some(BundleType::AppImage))
+}
+
+#[cfg(target_os = "linux")]
+fn updater_enabled_for_current_platform() -> bool {
+    updater_allowed(true, tauri::utils::platform::bundle_type())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn updater_enabled_for_current_platform() -> bool {
+    // Keep macOS and Windows updater behavior unchanged. Their bundle type
+    // variants must not be passed through Linux's AppImage-only policy.
+    updater_allowed(false, None)
+}
+
 /// Check the updater endpoint and, if a newer build is available, confirm
 /// with the user before downloading, installing, and restarting. When
 /// `user_initiated` is true (menu click) we also report "up to date" /
 /// errors; a silent startup check stays quiet unless there's an update.
 async fn check_for_updates(app: &AppHandle, user_initiated: bool) {
+    // A non-AppImage Linux build has no updater path. Keep the menu disabled
+    // as the normal guard, and retain this check for startup or programmatic
+    // callers so raw updater metadata errors never reach the user.
+    if !updater_enabled_for_current_platform() {
+        return;
+    }
+
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     use tauri_plugin_updater::UpdaterExt;
 
@@ -794,10 +827,14 @@ pub fn run() {
             app.state::<PtyManager>().start_detection_tick(app.handle().clone());
             // Quiet startup check — only surfaces a dialog when an update is
             // actually available (see check_for_updates's user_initiated flag).
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                check_for_updates(&app_handle, false).await;
-            });
+            // Linux deb/dev builds are intentionally excluded by the product
+            // policy; AppImage and existing non-Linux paths remain enabled.
+            if updater_enabled_for_current_platform() {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    check_for_updates(&app_handle, false).await;
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -836,7 +873,9 @@ pub fn run() {
 mod tests {
     use super::{
         passwd_shell_for_user, path_import_log_path, resolve_login_shell_with_probes, select_login_shell,
+        updater_allowed,
     };
+    use tauri::utils::config::BundleType;
     use std::cell::Cell;
     use std::path::Path;
 
@@ -940,5 +979,31 @@ mod tests {
             Some(Path::new("/home/alice/.local/share/cc.agmsg.app/logs/path-import.log").into())
         );
         assert_eq!(path_import_log_path(true, home, None), None);
+    }
+
+    #[test]
+    fn updater_is_appimage_only_on_linux_and_unrestricted_elsewhere() {
+        let cases = [
+            ("Deb", Some(BundleType::Deb), false),
+            ("Rpm", Some(BundleType::Rpm), false),
+            ("AppImage", Some(BundleType::AppImage), true),
+            ("Msi", Some(BundleType::Msi), false),
+            ("Nsis", Some(BundleType::Nsis), false),
+            ("App", Some(BundleType::App), false),
+            ("Dmg", Some(BundleType::Dmg), false),
+            ("None", None, false),
+        ];
+
+        for (label, bundle, linux_expected) in cases {
+            assert_eq!(
+                updater_allowed(true, bundle.clone()),
+                linux_expected,
+                "Linux updater policy mismatch for {label}"
+            );
+            assert!(
+                updater_allowed(false, bundle),
+                "non-Linux updater policy unexpectedly disabled for {label}"
+            );
+        }
     }
 }
