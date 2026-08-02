@@ -75,7 +75,10 @@ pub(crate) const APPIMAGE_CHILD_ENV_SPECS: [AppImageEnvSpec; 4] = [
 fn valid_appdir(appdir: Option<&str>) -> Option<&str> {
     let appdir = appdir?;
     let trimmed = appdir.trim_end_matches('/');
-    if trimmed.is_empty() || trimmed == "/" || !trimmed.starts_with('/') {
+    if trimmed.is_empty()
+        || trimmed == "/"
+        || !std::path::Path::new(trimmed).is_absolute()
+    {
         return None;
     }
     Some(appdir)
