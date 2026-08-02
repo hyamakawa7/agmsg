@@ -137,6 +137,19 @@ fn windows_shell_argv(cmd: &str, args: &[String]) -> Vec<String> {
     argv
 }
 
+#[cfg(target_os = "linux")]
+fn apply_appimage_env_to_builder(builder: &mut CommandBuilder, imported_path: Option<&str>) {
+    crate::for_each_appimage_env_action(imported_path, |spec, action| match action {
+        crate::AppImageEnvAction::Unchanged => {}
+        crate::AppImageEnvAction::Set(value) => {
+            builder.env(spec.name, value);
+        }
+        crate::AppImageEnvAction::Remove => {
+            builder.env_remove(spec.name);
+        }
+    });
+}
+
 /// Spawn `cmd args` in a fresh PTY and stream its output to the webview as
 /// `pty-output` events. Stores the session under `id`.
 #[tauri::command]
@@ -185,51 +198,14 @@ pub fn pty_spawn(
         builder.cwd(dir);
     }
     builder.env("TERM", "xterm-256color");
-    // Explicitly set PATH from what import_login_shell_path() resolved at
-    // startup (lib.rs) rather than relying on this child implicitly
-    // inheriting the process's own (mutated) environment — a real
-    // Finder-launch hardware gate still failed to find `claude`/`codex` even
-    // after that process-level import, so this removes any dependence on
-    // environment-inheritance behavior we can't fully control. No-op (falls
-    // back to whatever this process's own PATH already is) if the import
-    // never ran or failed, e.g. on Windows or if the login shell couldn't be
-    // queried.
+    // Linux child commands receive the AppImage sanitizer and the explicit
+    // login-shell PATH override. Other platforms retain their existing PATH
+    // propagation without carrying Linux-only sanitizer code.
+    #[cfg(target_os = "linux")]
+    apply_appimage_env_to_builder(&mut builder, crate::imported_path());
+    #[cfg(not(target_os = "linux"))]
     if let Some(path) = crate::imported_path() {
-        match crate::appimage_env_action_with_value(crate::APPIMAGE_PATH_ENV, Some(path)) {
-            crate::AppImageLibraryPathAction::Unchanged => {
-                builder.env("PATH", path);
-            }
-            crate::AppImageLibraryPathAction::Set(path) => {
-                builder.env("PATH", path);
-            }
-            crate::AppImageLibraryPathAction::Remove => {
-                builder.env_remove("PATH");
-            }
-        }
-    } else {
-        match crate::appimage_env_action(crate::APPIMAGE_PATH_ENV) {
-            crate::AppImageLibraryPathAction::Unchanged => {}
-            crate::AppImageLibraryPathAction::Set(path) => {
-                builder.env("PATH", path);
-            }
-            crate::AppImageLibraryPathAction::Remove => {
-                builder.env_remove("PATH");
-            }
-        }
-    }
-    // Keep AppImage's bundled runtime variables out of host-side child CLIs.
-    // The sanitizer operates on this child builder only; the GUI process keeps
-    // the variables WebKitGTK needs to run.
-    for spec in crate::APPIMAGE_CHILD_ENV_SPECS {
-        match crate::appimage_env_action(spec) {
-            crate::AppImageLibraryPathAction::Unchanged => {}
-            crate::AppImageLibraryPathAction::Set(value) => {
-                builder.env(spec.name, value);
-            }
-            crate::AppImageLibraryPathAction::Remove => {
-                builder.env_remove(spec.name);
-            }
-        }
+        builder.env("PATH", path);
     }
 
     let mut child = pair.slave.spawn_command(builder).map_err(|e| e.to_string())?;
@@ -315,16 +291,23 @@ pub fn pty_resize(
 /// SIGHUP first (like closing a terminal, so a well-behaved CLI runs its
 /// shutdown hooks), then SIGKILL after a grace period if it's still alive. The
 /// reader thread reaps the child and emits pty-exit when it goes.
+fn send_kill_signal(pid: &str, signal: &str) {
+    let mut command = std::process::Command::new("kill");
+    #[cfg(target_os = "linux")]
+    crate::apply_appimage_env_to_command(&mut command, None);
+    let _ = command.arg(signal).arg(pid).status();
+}
+
 #[tauri::command]
 pub fn pty_kill(manager: State<'_, PtyManager>, id: String) -> Result<(), String> {
     let pid = manager.sessions.lock().unwrap().remove(&id).and_then(|s| s.pid);
     if let Some(pid) = pid {
         let pid_s = pid.to_string();
-        let _ = std::process::Command::new("kill").arg("-HUP").arg(&pid_s).status();
+        send_kill_signal(&pid_s, "-HUP");
         // Fallback: force-kill if it hasn't exited after a grace period.
         thread::spawn(move || {
             thread::sleep(Duration::from_secs(4));
-            let _ = std::process::Command::new("kill").arg("-KILL").arg(&pid_s).status();
+            send_kill_signal(&pid_s, "-KILL");
         });
     }
     Ok(())

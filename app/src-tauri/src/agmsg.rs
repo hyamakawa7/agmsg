@@ -188,46 +188,14 @@ fn bash_command() -> Result<std::process::Command, String> {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    // Explicitly attach the PATH import_login_shell_path() resolved at
-    // startup (lib.rs), same reasoning as pty::pty_spawn: don't rely on this
-    // child implicitly inheriting the process's own (mutated) environment.
-    // No-op on Windows / if the import never ran or failed.
+    // Linux child commands receive the AppImage sanitizer and the explicit
+    // login-shell PATH override. Other platforms retain their existing PATH
+    // propagation without carrying Linux-only sanitizer code.
+    #[cfg(target_os = "linux")]
+    crate::apply_appimage_env_to_command(&mut cmd, crate::imported_path());
+    #[cfg(not(target_os = "linux"))]
     if let Some(path) = crate::imported_path() {
-        match crate::appimage_env_action_with_value(crate::APPIMAGE_PATH_ENV, Some(path)) {
-            crate::AppImageLibraryPathAction::Unchanged => {
-                cmd.env("PATH", path);
-            }
-            crate::AppImageLibraryPathAction::Set(path) => {
-                cmd.env("PATH", path);
-            }
-            crate::AppImageLibraryPathAction::Remove => {
-                cmd.env_remove("PATH");
-            }
-        }
-    } else {
-        match crate::appimage_env_action(crate::APPIMAGE_PATH_ENV) {
-            crate::AppImageLibraryPathAction::Unchanged => {}
-            crate::AppImageLibraryPathAction::Set(path) => {
-                cmd.env("PATH", path);
-            }
-            crate::AppImageLibraryPathAction::Remove => {
-                cmd.env_remove("PATH");
-            }
-        }
-    }
-    // AppImage's bundled runtime variables must not leak into host-side
-    // scripts/CLI children. This only changes the child Command; the GUI
-    // process keeps its own AppImage environment intact.
-    for spec in crate::APPIMAGE_CHILD_ENV_SPECS {
-        match crate::appimage_env_action(spec) {
-            crate::AppImageLibraryPathAction::Unchanged => {}
-            crate::AppImageLibraryPathAction::Set(value) => {
-                cmd.env(spec.name, value);
-            }
-            crate::AppImageLibraryPathAction::Remove => {
-                cmd.env_remove(spec.name);
-            }
-        }
+        cmd.env("PATH", path);
     }
     Ok(cmd)
 }

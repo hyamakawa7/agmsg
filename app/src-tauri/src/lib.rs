@@ -11,9 +11,9 @@ use tauri::menu::{AboutMetadataBuilder, CheckMenuItem, Menu, MenuItem, Predefine
 use tauri::utils::config::BundleType;
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
-/// The PATH import_login_shell_path() resolved, kept around so every spawn
-/// site (pty::pty_spawn, agmsg::bash_command) can attach it to the child
-/// process explicitly via .env("PATH", ...) rather than relying on the
+/// The PATH import_login_shell_path() resolved, kept around so long-lived
+/// child launch sites (pty::pty_spawn, agmsg::bash_command) can attach it via
+/// .env("PATH", ...) rather than relying on the
 /// spawned process implicitly inheriting this process's own (mutated)
 /// environment — a real Finder-launch hardware failure persisted even with
 /// the process-level std::env::set_var in place, so this makes the
@@ -30,7 +30,7 @@ pub(crate) fn imported_path() -> Option<&'static str> {
 /// Keeping the action explicit distinguishes an unchanged inherited variable
 /// from an intentional `env_remove`.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum AppImageLibraryPathAction {
+pub(crate) enum AppImageEnvAction {
     Unchanged,
     Set(String),
     Remove,
@@ -151,40 +151,34 @@ fn appimage_child_env_enabled() -> bool {
     valid_appdir(appdir.as_deref()).is_some()
 }
 
-#[cfg(not(target_os = "linux"))]
-fn appimage_child_env_enabled() -> bool {
-    false
-}
-
 /// Read one AppImage launcher variable and turn its sanitized value into a
-/// child-only action. The Linux cfg and valid absolute non-root APPDIR check
-/// are the gates; without both, this is an identity operation for dev, deb,
-/// and other non-AppImage launches. APPDIR is used directly because an
-/// extracted AppImage can have APPDIR while its binary bundle marker remains
-/// unknown.
+/// Read one AppImage launcher variable and turn its sanitized value into a
+/// child-only action. Linux callers enter this path only when APPDIR is a valid
+/// absolute, non-root runtime directory; other platforms do not call it.
 pub(crate) fn appimage_env_action_for_context(
     enabled: bool,
     spec: AppImageEnvSpec,
     value: Option<&str>,
     appdir: Option<&str>,
-) -> AppImageLibraryPathAction {
+) -> AppImageEnvAction {
     if !enabled {
-        return AppImageLibraryPathAction::Unchanged;
+        return AppImageEnvAction::Unchanged;
     }
     let Some(appdir) = valid_appdir(appdir) else {
-        return AppImageLibraryPathAction::Unchanged;
+        return AppImageEnvAction::Unchanged;
     };
     let Some(value) = value else {
-        return AppImageLibraryPathAction::Unchanged;
+        return AppImageEnvAction::Unchanged;
     };
     match sanitize_appimage_env(spec, Some(value), Some(appdir)) {
-        Some(sanitized) if sanitized == value => AppImageLibraryPathAction::Unchanged,
-        Some(sanitized) => AppImageLibraryPathAction::Set(sanitized),
-        None => AppImageLibraryPathAction::Remove,
+        Some(sanitized) if sanitized == value => AppImageEnvAction::Unchanged,
+        Some(sanitized) => AppImageEnvAction::Set(sanitized),
+        None => AppImageEnvAction::Remove,
     }
 }
 
-pub(crate) fn appimage_env_action(spec: AppImageEnvSpec) -> AppImageLibraryPathAction {
+#[cfg(target_os = "linux")]
+pub(crate) fn appimage_env_action(spec: AppImageEnvSpec) -> AppImageEnvAction {
     let appdir = std::env::var("APPDIR").ok();
     let value = std::env::var(spec.name).ok();
     appimage_env_action_for_context(
@@ -195,10 +189,11 @@ pub(crate) fn appimage_env_action(spec: AppImageEnvSpec) -> AppImageLibraryPathA
     )
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn appimage_env_action_with_value(
     spec: AppImageEnvSpec,
     value: Option<&str>,
-) -> AppImageLibraryPathAction {
+) -> AppImageEnvAction {
     let appdir = std::env::var("APPDIR").ok();
     appimage_env_action_for_context(
         appimage_child_env_enabled(),
@@ -206,6 +201,51 @@ pub(crate) fn appimage_env_action_with_value(
         value,
         appdir.as_deref(),
     )
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn for_each_appimage_env_action(
+    imported_path: Option<&str>,
+    mut apply: impl FnMut(AppImageEnvSpec, AppImageEnvAction),
+) {
+    let path_action = imported_path.map_or_else(
+        || appimage_env_action(APPIMAGE_PATH_ENV),
+        |path| appimage_env_action_with_value(APPIMAGE_PATH_ENV, Some(path)),
+    );
+    apply(APPIMAGE_PATH_ENV, path_action);
+    for spec in APPIMAGE_CHILD_ENV_SPECS {
+        apply(spec, appimage_env_action(spec));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn apply_appimage_env_action(
+    command: &mut std::process::Command,
+    spec: AppImageEnvSpec,
+    action: AppImageEnvAction,
+) {
+    match action {
+        AppImageEnvAction::Unchanged => {}
+        AppImageEnvAction::Set(value) => {
+            command.env(spec.name, value);
+        }
+        AppImageEnvAction::Remove => {
+            command.env_remove(spec.name);
+        }
+    }
+}
+
+/// Apply the Linux AppImage child-environment policy to a native command.
+/// `imported_path` is the explicit login-shell PATH override used by the
+/// long-lived child launchers; `None` means sanitize the inherited PATH.
+#[cfg(target_os = "linux")]
+pub(crate) fn apply_appimage_env_to_command(
+    command: &mut std::process::Command,
+    imported_path: Option<&str>,
+) {
+    for_each_appimage_env_action(imported_path, |spec, action| {
+        apply_appimage_env_action(command, spec, action);
+    });
 }
 
 /// The native menu's current language (BCP-47 code, e.g. "ja", "zh-CN") —
@@ -293,7 +333,10 @@ fn import_login_shell_path(app: &AppHandle) {
     let shell = resolve_login_shell();
     log_path_import(app, &format!("resolved login shell: {shell}"));
     let script = format!("printf '{START}%s{END}' \"$PATH\"");
-    let output = match std::process::Command::new(&shell).args(["-ilc", &script]).output() {
+    let mut command = std::process::Command::new(&shell);
+    #[cfg(target_os = "linux")]
+    apply_appimage_env_to_command(&mut command, None);
+    let output = match command.args(["-ilc", &script]).output() {
         Ok(o) => o,
         Err(e) => {
             let msg = format!("couldn't run login shell ({shell}) to import PATH: {e}");
@@ -406,7 +449,9 @@ fn resolve_login_shell() -> String {
             if user.is_empty() {
                 return None;
             }
-            std::process::Command::new("getent")
+            let mut command = std::process::Command::new("getent");
+            apply_appimage_env_to_command(&mut command, None);
+            command
                 .args(["passwd", &user])
                 .output()
                 .ok()
@@ -1056,7 +1101,7 @@ mod tests {
     use super::{
         appimage_env_action_for_context, passwd_shell_for_user, path_import_log_path,
         resolve_login_shell_with_probes, sanitize_appimage_env, select_login_shell, updater_allowed,
-        AppImageLibraryPathAction, APPIMAGE_CHILD_ENV_SPECS, APPIMAGE_PATH_ENV,
+        AppImageEnvAction, APPIMAGE_CHILD_ENV_SPECS, APPIMAGE_PATH_ENV,
     };
     use tauri::utils::config::BundleType;
     use std::cell::Cell;
@@ -1270,8 +1315,8 @@ mod tests {
                 Some("/tmp/.mount_agmsg/usr/lib:/usr/lib"),
                 Some("/tmp/.mount_agmsg"),
             ),
-            AppImageLibraryPathAction::Set("/usr/lib".into()),
-            "valid APPDIR must sanitize without an APPIMAGE/bundle signal"
+            AppImageEnvAction::Set("/usr/lib".into()),
+            "valid APPDIR alone must enable child sanitization"
         );
     }
 
@@ -1329,8 +1374,8 @@ mod tests {
                 Some("/tmp/.mount_agmsg/usr/lib"),
                 Some("/tmp/.mount_agmsg"),
             ),
-            AppImageLibraryPathAction::Unchanged,
-            "non-Linux must ignore APPDIR even when it is present"
+            AppImageEnvAction::Unchanged,
+            "a disabled sanitizer context must leave APPDIR unchanged"
         );
     }
 }
