@@ -88,22 +88,29 @@ that escalates privileges. Tell `.deb` users to download and install the newer
 package from the release page instead. macOS and Windows updater behavior is
 unchanged.
 
-The `linux-x86_64` entry in the hand-authored `latest.json` must pair the
-AppImage URL with the exact contents of its v2 signature file (not a URL to the
-signature file):
+The `platforms` map in the hand-authored `latest.json` is cumulative. Start from
+the current file and preserve the existing `darwin-aarch64` and
+`windows-x86_64` objects; merge only the new `linux-x86_64` object. Do not
+replace the map with a Linux-only object, or the existing macOS/Windows updater
+paths will stop working. The Linux entry must pair the AppImage URL with the
+exact contents of its v2 signature file (not a URL to the signature file):
 
-```json
-{
-  "version": "0.4.0",
-  "notes": "...",
-  "pub_date": "2026-08-02T00:00:00Z",
-  "platforms": {
-    "linux-x86_64": {
-      "url": "https://github.com/fujibee/agmsg/releases/download/app-latest/agmsg_0.4.0_amd64.AppImage",
-      "signature": "<contents of agmsg_0.4.0_amd64.AppImage.sig>"
-    }
-  }
-}
+```bash
+APPIMAGE_URL="https://github.com/fujibee/agmsg/releases/download/app-latest/agmsg_0.4.0_amd64.AppImage"
+APPIMAGE_SIG="$(cat agmsg_0.4.0_amd64.AppImage.sig)"
+jq --arg url "$APPIMAGE_URL" --arg signature "$APPIMAGE_SIG" \
+  '.platforms["linux-x86_64"] = {url: $url, signature: $signature}' \
+  latest.json > latest.json.next
+mv latest.json.next latest.json
+
+# Inspect the merge: the existing macOS/Windows entries must still be present,
+# and Linux must point to an AppImage with a non-empty matching signature.
+jq -e '
+  .platforms["darwin-aarch64"] != null and
+  .platforms["windows-x86_64"] != null and
+  (.platforms["linux-x86_64"].url | endswith(".AppImage")) and
+  (.platforms["linux-x86_64"].signature | length > 0)
+' latest.json
 ```
 
 When updating the fixed `app-latest` release, upload the Linux `.deb`, the
