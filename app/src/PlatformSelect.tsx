@@ -49,6 +49,27 @@ export function nextPlatformSelectIndex(
   }
 }
 
+type PlatformSelectScrollMetrics = {
+  scrollTop: number;
+  clientHeight: number;
+  optionTop: number;
+  optionBottom: number;
+};
+
+/** Return the nearest scrollTop that makes the active option fully visible. */
+export function calculatePlatformSelectScrollTop({
+  scrollTop,
+  clientHeight,
+  optionTop,
+  optionBottom,
+}: PlatformSelectScrollMetrics): number {
+  const visibleTop = scrollTop;
+  const visibleBottom = scrollTop + clientHeight;
+  if (optionTop < visibleTop) return Math.max(0, optionTop);
+  if (optionBottom > visibleBottom) return Math.max(0, optionBottom - clientHeight);
+  return scrollTop;
+}
+
 type PlatformSelectPopupPositionBase = {
   left: number;
   width: number;
@@ -131,6 +152,7 @@ function LinuxSelect(props: PlatformSelectProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
+  const optionRefs = useRef<Array<HTMLDivElement | null>>([]);
   const listboxId = useId();
   const selectedIndex = useMemo(
     () => firstSelectableIndex(props.options, props.value),
@@ -143,6 +165,20 @@ function LinuxSelect(props: PlatformSelectProps) {
   useEffect(() => {
     if (!open) setActiveIndex(selectedIndex);
   }, [open, selectedIndex]);
+
+  useEffect(() => {
+    if (!open || activeIndex < 0) return;
+    const popup = popupRef.current;
+    const option = optionRefs.current[activeIndex];
+    if (!popup || !option) return;
+    const nextScrollTop = calculatePlatformSelectScrollTop({
+      scrollTop: popup.scrollTop,
+      clientHeight: popup.clientHeight,
+      optionTop: option.offsetTop,
+      optionBottom: option.offsetTop + option.offsetHeight,
+    });
+    if (nextScrollTop !== popup.scrollTop) popup.scrollTop = nextScrollTop;
+  }, [activeIndex, open]);
 
   const positionPopup = useCallback(() => {
     const trigger = triggerRef.current;
@@ -340,6 +376,9 @@ function LinuxSelect(props: PlatformSelectProps) {
               {props.options.map((option, index) => (
                 <div
                   key={option.value}
+                  ref={(element) => {
+                    optionRefs.current[index] = element;
+                  }}
                   id={`${listboxId}-option-${index}`}
                   className={index === activeIndex ? "platform-select-option active" : "platform-select-option"}
                   role="option"

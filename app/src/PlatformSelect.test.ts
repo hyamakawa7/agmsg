@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   calculatePlatformSelectPopupPosition,
+  calculatePlatformSelectScrollTop,
   nextPlatformSelectIndex,
   type PlatformSelectOption,
 } from "./PlatformSelect";
@@ -26,6 +27,41 @@ describe("nextPlatformSelectIndex", () => {
 
   it("returns -1 when there are no options", () => {
     expect(nextPlatformSelectIndex([], 0, 1)).toBe(-1);
+  });
+});
+
+describe("calculatePlatformSelectScrollTop", () => {
+  it("scrolls down when the active option is below the visible area", () => {
+    expect(
+      calculatePlatformSelectScrollTop({
+        scrollTop: 0,
+        clientHeight: 100,
+        optionTop: 120,
+        optionBottom: 140,
+      }),
+    ).toBe(40);
+  });
+
+  it("scrolls up when the active option is above the visible area", () => {
+    expect(
+      calculatePlatformSelectScrollTop({
+        scrollTop: 80,
+        clientHeight: 100,
+        optionTop: 40,
+        optionBottom: 60,
+      }),
+    ).toBe(40);
+  });
+
+  it("keeps scrollTop unchanged when the active option is already visible", () => {
+    expect(
+      calculatePlatformSelectScrollTop({
+        scrollTop: 40,
+        clientHeight: 100,
+        optionTop: 80,
+        optionBottom: 100,
+      }),
+    ).toBe(40);
   });
 });
 
